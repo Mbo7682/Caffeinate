@@ -2,6 +2,8 @@
 build/
 dist/
 *.zip
+# Track the release zip so people can download without building
+!release/*.zip
 
 # Xcode
 *.xcuserstate

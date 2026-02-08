@@ -38,6 +38,10 @@ sudo xcode-select -s /Applications/Xcode.app/Contents/Developer
 
 Alternatively, install Xcode from the [Mac App Store](https://apps.apple.com/app/xcode/id497799835) in the usual way, then run the `xcode-select` command above.
 
+## Download (no build required)
+
+A pre-built release is in the repo: **[release/Caffinate-macOS.zip](release/Caffinate-macOS.zip)**. Unzip it, move `Caffinate.app` to Applications (or leave in Downloads), and open it. If macOS blocks it, right‑click the app → **Open** → **Open**.
+
 ## Build and run
 
 1. Open `Caffinate.xcodeproj` in Xcode.
