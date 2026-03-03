@@ -19,7 +19,7 @@ struct PopoverView: View {
             quitButton
         }
         .frame(width: 280)
-        .padding(.vertical, 12)
+        .padding(.bottom, 12)
         .background(popoverBackground)
         .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
         .onAppear {
@@ -35,14 +35,28 @@ struct PopoverView: View {
             VStack(alignment: .leading, spacing: 2) {
                 Text("Caffinate")
                     .font(.headline)
-                Text(manager.isActive ? "Keeping Mac awake" : "Off")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                if manager.isActive {
+                    if manager.hasTimeout {
+                        Text("Keeping Mac awake — \(manager.remainingSeconds)s remaining")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    } else {
+                        Text("Keeping Mac awake")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                } else {
+                    Text("Off")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
             }
             Spacer()
         }
         .padding(.horizontal, 16)
-        .padding(.bottom, 12)
+        .padding(.vertical, 12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(manager.isActive ? Color.red.opacity(0.15) : Color.clear)
     }
 
     private var optionsSection: some View {
@@ -128,14 +142,15 @@ struct PopoverView: View {
                     .fontWeight(.medium)
             }
             .frame(maxWidth: .infinity)
-            .padding(.vertical, 10)
+            .padding(.vertical, 14)
+            .background(manager.isActive ? Color.red.opacity(0.15) : Color.accentColor.opacity(0.15))
+            .clipShape(RoundedRectangle(cornerRadius: 8))
         }
         .buttonStyle(.plain)
-        .background(manager.isActive ? Color.red.opacity(0.15) : Color.accentColor.opacity(0.15))
-        .clipShape(RoundedRectangle(cornerRadius: 8))
+        .contentShape(Rectangle())
         .padding(.horizontal, 16)
-        .padding(.top, 12)
-        .padding(.bottom, 4)
+        .padding(.top, 8)
+        .padding(.bottom, 12)
     }
 
     private var quitButton: some View {

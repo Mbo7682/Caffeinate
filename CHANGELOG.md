@@ -2,6 +2,23 @@
 
 All notable changes to Caffinate are documented here. The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.0.1] - 2026-03-03
+
+### Added
+
+- Timeout countdown in the popover header while Caffinate is active.
+- Lock screen message end-time format when timeout is enabled (for example: “keeping awake until 17:30”).
+
+### Fixed
+
+- Lock screen message now clears when the caffeinate process terminates (including timeout completion).
+- Start/Stop button hit area now responds across the full button surface, not only text/icon.
+- Active-state header highlight now fills to the very top edge of the popover.
+
+### Changed
+
+- Active-state UI uses a clearer red-tinted visual treatment for both header and Stop button.
+
 ## [1.0.0] - 2025-02-08
 
 ### Added

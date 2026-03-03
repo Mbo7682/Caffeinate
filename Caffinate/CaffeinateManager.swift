@@ -69,8 +69,11 @@ final class CaffeinateManager: ObservableObject {
     @Published var options: Set<Option> = [.preventIdleSleep, .preventDisplaySleep]
     @Published var timeoutSeconds: String = "" // empty = no timeout
     @Published var hasTimeout: Bool = false
+    @Published private(set) var remainingSeconds: Int = 0
 
     private var process: Process?
+    private var startTime: Date?
+    private var countdownTimer: Timer?
     private let caffeinatePath = "/usr/bin/caffeinate"
 
     var timeoutValue: Int? {
@@ -86,8 +89,18 @@ final class CaffeinateManager: ObservableObject {
         task.arguments = args
         task.terminationHandler = { [weak self] _ in
             Task { @MainActor in
+                self?.countdownTimer?.invalidate()
+                self?.countdownTimer = nil
+                self?.startTime = nil
+                self?.remainingSeconds = 0
                 self?.process = nil
                 self?.isActive = false
+                // Clear lock screen message when process terminates (delay ensures it executes)
+                if self?.showOnLockScreen ?? false {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                        self?.setLockScreenMessage("")
+                    }
+                }
                 self?.sendNotification(title: "Caffinate", body: "Keep-awake stopped.")
             }
         }
@@ -95,8 +108,26 @@ final class CaffeinateManager: ObservableObject {
             try task.run()
             process = task
             isActive = true
+            
+            // Start countdown timer if timeout is set
+            if let timeout = timeoutValue {
+                startTime = Date()
+                remainingSeconds = timeout
+                countdownTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
+                    guard let self = self else { return }
+                    let elapsed = Int(Date().timeIntervalSince(self.startTime ?? Date()))
+                    let remaining = max(0, timeout - elapsed)
+                    self.remainingSeconds = remaining
+                    if remaining <= 0 {
+                        self.countdownTimer?.invalidate()
+                        self.countdownTimer = nil
+                    }
+                }
+            }
+            
             if showOnLockScreen {
-                setLockScreenMessage("Caffinate is keeping this Mac awake")
+                let message = buildLockScreenMessage()
+                setLockScreenMessage(message)
             }
             sendNotification(title: "Caffinate", body: "Mac will stay awake while locked.")
         } catch {
@@ -105,6 +136,10 @@ final class CaffeinateManager: ObservableObject {
     }
 
     func stop() {
+        countdownTimer?.invalidate()
+        countdownTimer = nil
+        startTime = nil
+        remainingSeconds = 0
         if showOnLockScreen {
             setLockScreenMessage("")
         }
@@ -153,6 +188,17 @@ final class CaffeinateManager: ObservableObject {
     }
 
     // MARK: - Lock screen message
+
+    private func buildLockScreenMessage() -> String {
+        if let timeout = timeoutValue, let startTime = startTime {
+            let endTime = startTime.addingTimeInterval(TimeInterval(timeout))
+            let formatter = DateFormatter()
+            formatter.dateFormat = "HH:mm"
+            let endTimeString = formatter.string(from: endTime)
+            return "Caffinate is keeping awake until \(endTimeString)"
+        }
+        return "Caffinate is keeping this Mac awake"
+    }
 
     /// One-time setup when user toggles "Show on lock screen" on: installs sudoers rule so start/stop don't prompt.
     func runLockScreenOneTimeSetup() {
