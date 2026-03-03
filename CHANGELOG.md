@@ -18,6 +18,7 @@ All notable changes to Caffinate are documented here. The format is based on [Ke
 ### Changed
 
 - Active-state UI uses a clearer red-tinted visual treatment for both header and Stop button.
+- Documented lock-screen behavior: login window text does not live-refresh while already locked (macOS limitation).
 
 ## [1.0.0] - 2025-02-08
 

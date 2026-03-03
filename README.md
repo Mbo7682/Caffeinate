@@ -2,16 +2,25 @@
 
 A small macOS menu bar app that runs the system `caffeinate` command so your Mac stays awake while locked. Uses a liquid-glass style UI and supports all caffeinate options.
 
-**Version:** 1.0.0 — see [CHANGELOG.md](CHANGELOG.md) for release history.
+**Version:** 1.0.1 — see [CHANGELOG.md](CHANGELOG.md) for release history.
 
 ## Features
 
 - **Menu bar only** — runs from the menu bar; no dock icon (`LSUIElement`)
 - **Caffeinate options** — Display (-d), Idle (-i), AC power (-s), User active (-u), Disk (-m)
-- **Optional timeout** — run for a set number of seconds (-t)
+- **Optional timeout** — run for a set number of seconds (-t) with live countdown in the popover header
 - **Notifications** — notifies when keep-awake is started or stopped
-- **Show on lock screen** — optional: set the system lock screen message to “Caffinate is keeping this Mac awake” while running (uses the same message as System Settings → Lock Screen; may prompt for your password to set/clear)
+- **Show on lock screen** — optional: set the system lock screen message while running; with timeout enabled, the message includes the end time (for example, “keeping awake until 17:30”)
 - **SwiftUI** — frosted glass / ultra-thin material popover (liquid-glass style on recent macOS)
+
+## v1.0.1 highlights
+
+- Timeout countdown shown in the popover header while active
+- Start/Stop button hit area fixed (entire button is clickable)
+- Active-state header fill improved for clearer running status
+- Lock screen message clears when caffeinate stops (including timeout completion)
+
+**Note about lock screen updates:** macOS lock screen text is rendered when the screen locks and does not live-refresh while already locked.
 
 ## Requirements
 
