@@ -3,18 +3,21 @@ import AppKit
 
 struct PopoverView: View {
     @ObservedObject var manager: CaffeinateManager
+    @ObservedObject var updateChecker: UpdateChecker
 
     var body: some View {
         VStack(spacing: 0) {
             header
+            if case .updateAvailable = updateChecker.state {
+                Divider()
+                updatesRow
+            }
             Divider()
             optionsSection
             Divider()
             timeoutSection
             Divider()
             lockScreenSection
-            Divider()
-            mainToggle
             Divider()
             quitButton
         }
@@ -52,11 +55,55 @@ struct PopoverView: View {
                 }
             }
             Spacer()
+            Button {
+                if manager.isActive {
+                    manager.stop()
+                } else {
+                    manager.start()
+                }
+            } label: {
+                Text(manager.isActive ? "Stop" : "Start")
+                    .font(.subheadline)
+                    .fontWeight(.semibold)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 6)
+                    .background(manager.isActive ? Color.red.opacity(0.18) : Color.accentColor.opacity(0.18))
+                    .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+            }
+            .buttonStyle(.plain)
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 12)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(manager.isActive ? Color.red.opacity(0.15) : Color.clear)
+    }
+
+    @ViewBuilder
+    private var updatesRow: some View {
+        if case .updateAvailable(_, let latest, let url) = updateChecker.state {
+            HStack(spacing: 10) {
+                Text("Updates")
+                    .font(.subheadline)
+                    .fontWeight(.medium)
+                    .foregroundStyle(.secondary)
+                Spacer()
+                Button {
+                    NSWorkspace.shared.open(url)
+                } label: {
+                    Text("Update v\(latest)")
+                        .font(.subheadline)
+                        .fontWeight(.semibold)
+                        .foregroundStyle(.primary)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 6)
+                        .background(Color.accentColor.opacity(0.18))
+                        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                }
+                .buttonStyle(.plain)
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 10)
+        }
     }
 
     private var optionsSection: some View {
@@ -86,14 +133,38 @@ struct PopoverView: View {
                     .font(.subheadline)
             }
             .toggleStyle(.switch)
-            .padding(.horizontal, 16)
+            .padding(.leading, 8)
+            .padding(.trailing, 16)
             .padding(.top, 12)
 
             if manager.hasTimeout {
                 TextField("e.g. 3600", text: $manager.timeoutSeconds)
                     .textFieldStyle(.roundedBorder)
-                    .padding(.horizontal, 16)
+                    .padding(.leading, 8)
+                    .padding(.trailing, 16)
             }
+
+            Toggle(isOn: $manager.lidClosedTimerMode) {
+                Text("Lid closed mode (requires timeout)")
+                    .font(.subheadline)
+            }
+            .toggleStyle(.switch)
+            .padding(.leading, 8)
+            .padding(.trailing, 16)
+            .padding(.top, 4)
+            .onChange(of: manager.lidClosedTimerMode) { _, newValue in
+                // Lid-closed mode must be time-bounded, so keep Timeout enabled while it is on.
+                if newValue {
+                    manager.hasTimeout = true
+                }
+            }
+
+            Text("Uses caffeinate’s system-sleep prevention (best with a timeout).")
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(.leading, 8)
+                .padding(.trailing, 16)
         }
         .padding(.bottom, 8)
     }
@@ -119,6 +190,25 @@ struct PopoverView: View {
                     .padding(.horizontal, 16)
             }
 
+            if manager.showOnLockScreen, (!manager.lockScreenSetupDone || manager.lockScreenPasswordReentryNeeded) {
+                Button {
+                    manager.runLockScreenOneTimeSetup()
+                } label: {
+                    HStack(spacing: 6) {
+                        Image(systemName: "key.fill")
+                            .foregroundStyle(.secondary)
+                        Text("Re-enter password")
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.vertical, 6)
+                }
+                .buttonStyle(.plain)
+                .padding(.horizontal, 16)
+                .padding(.top, 2)
+            }
+
             Text("Shows “Caffinate is keeping this Mac awake” on the lock screen. You’ll be asked for your password only when you turn this option on.")
                 .font(.caption2)
                 .foregroundStyle(.secondary)
@@ -126,31 +216,6 @@ struct PopoverView: View {
                 .padding(.horizontal, 16)
                 .padding(.bottom, 8)
         }
-    }
-
-    private var mainToggle: some View {
-        Button {
-            if manager.isActive {
-                manager.stop()
-            } else {
-                manager.start()
-            }
-        } label: {
-            HStack {
-                Image(systemName: manager.isActive ? "stop.circle.fill" : "play.circle.fill")
-                Text(manager.isActive ? "Stop" : "Start")
-                    .fontWeight(.medium)
-            }
-            .frame(maxWidth: .infinity)
-            .padding(.vertical, 14)
-            .background(manager.isActive ? Color.red.opacity(0.15) : Color.accentColor.opacity(0.15))
-            .clipShape(RoundedRectangle(cornerRadius: 8))
-        }
-        .buttonStyle(.plain)
-        .contentShape(Rectangle())
-        .padding(.horizontal, 16)
-        .padding(.top, 8)
-        .padding(.bottom, 12)
     }
 
     private var quitButton: some View {
@@ -206,6 +271,6 @@ struct OptionRow: View {
 }
 
 #Preview {
-    PopoverView(manager: CaffeinateManager())
+    PopoverView(manager: CaffeinateManager(), updateChecker: UpdateChecker())
         .frame(width: 280)
 }

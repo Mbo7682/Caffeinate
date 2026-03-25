@@ -5,6 +5,7 @@ import UserNotifications
 @MainActor
 final class CaffeinateManager: ObservableObject {
     private static let showOnLockScreenKey = "showOnLockScreen"
+    private static let lidClosedTimerModeKey = "lidClosedTimerMode"
 
     /// When true, sets the system lock screen message so it's visible when the Mac is locked.
     @Published var showOnLockScreen: Bool {
@@ -14,8 +15,24 @@ final class CaffeinateManager: ObservableObject {
                 // Only prompt when the toggle is turned on (one-time setup for password-free start/stop).
                 runLockScreenOneTimeSetup()
             }
+            if !showOnLockScreen {
+                lockScreenPasswordReentryNeeded = false
+            }
             if isActive {
                 setLockScreenMessage(showOnLockScreen ? "Caffinate is keeping this Mac awake" : "")
+            }
+        }
+    }
+
+    /// When enabled, start adds `-s` (AC-only system sleep prevention) so the Mac can stay awake with lid closed.
+    /// This is most useful when combined with a timeout.
+    @Published var lidClosedTimerMode: Bool {
+        didSet {
+            UserDefaults.standard.set(lidClosedTimerMode, forKey: Self.lidClosedTimerModeKey)
+            if lidClosedTimerMode {
+                options.insert(.preventSystemSleepOnAC)
+            } else {
+                options.remove(.preventSystemSleepOnAC)
             }
         }
     }
@@ -24,6 +41,8 @@ final class CaffeinateManager: ObservableObject {
 
     /// True after the user has completed one-time setup (when they toggled "Show on lock screen" on).
     @Published private(set) var lockScreenSetupDone: Bool = false
+    /// True when lock-screen sudo configuration needs the user to re-enter their admin password.
+    @Published private(set) var lockScreenPasswordReentryNeeded: Bool = false
 
     private let lockScreenHelperPath: String? = {
         Bundle.main.path(forResource: "set-lock-message", ofType: "sh")
@@ -31,16 +50,57 @@ final class CaffeinateManager: ObservableObject {
 
     init() {
         self.showOnLockScreen = UserDefaults.standard.bool(forKey: Self.showOnLockScreenKey)
+        self.lidClosedTimerMode = UserDefaults.standard.bool(forKey: Self.lidClosedTimerModeKey)
         self.lockScreenSetupDone = UserDefaults.standard.bool(forKey: Self.lockScreenSetupDoneKey)
         if lockScreenSetupDone && lockScreenHelperPath == nil {
             self.lockScreenSetupDone = false
             UserDefaults.standard.set(false, forKey: Self.lockScreenSetupDoneKey)
         }
+        if lidClosedTimerMode {
+            options.insert(.preventSystemSleepOnAC)
+        }
+
+        // If the user previously enabled "Show on lock screen", proactively detect
+        // whether sudo permissions still require a password so the UI can show
+        // "Re-enter password" immediately (without waiting for Start).
+        if showOnLockScreen, lockScreenSetupDone {
+            probeLockScreenPasswordRequirement()
+        }
+    }
+
+    /// Uses `sudo -n` to check whether the helper command requires the admin password.
+    /// Does not prompt; on failure we surface the "Re-enter password" UI.
+    private func probeLockScreenPasswordRequirement() {
+        guard let scriptPath = lockScreenHelperPath else { return }
+
+        let task = Process()
+        task.executableURL = URL(fileURLWithPath: "/usr/bin/sudo")
+        task.arguments = ["-n", "/bin/bash", scriptPath, ""]
+        task.terminationHandler = { [weak self] process in
+            guard let self else { return }
+            let status = process.terminationStatus
+            Task { @MainActor in
+                // Only update the re-entry flag; keep `lockScreenSetupDone` as-is.
+                self.lockScreenPasswordReentryNeeded = status != 0
+                if status != 0 {
+                    self.sendNotification(
+                        title: "Caffinate",
+                        body: "Lock screen permissions need your admin password. Open the app and use “Re-enter password”."
+                    )
+                }
+            }
+        }
+
+        do {
+            try task.run()
+        } catch {
+            // If probing fails for some reason, keep the existing state rather than changing flags incorrectly.
+        }
     }
     enum Option: String, CaseIterable {
         case preventDisplaySleep = "Display"
         case preventIdleSleep = "Idle"
-        case preventSystemSleepOnAC = "AC power"
+        case preventSystemSleepOnAC = "System sleep"
         case userActive = "User active"
         case preventDiskSleep = "Disk"
 
@@ -58,7 +118,7 @@ final class CaffeinateManager: ObservableObject {
             switch self {
             case .preventDisplaySleep: return "Keep display on"
             case .preventIdleSleep: return "Prevent idle sleep"
-            case .preventSystemSleepOnAC: return "No sleep on AC only"
+            case .preventSystemSleepOnAC: return "Prevent system sleep"
             case .userActive: return "User active (set timeout or lasts 5 sec)"
             case .preventDiskSleep: return "Prevent disk idle sleep"
             }
@@ -83,6 +143,20 @@ final class CaffeinateManager: ObservableObject {
 
     func start() {
         guard !isActive else { return }
+        // Lid-closed mode is intended for time-bounded “keep awake”.
+        // Enforce that a valid timeout is set; otherwise we risk an unintended indefinite keep-awake.
+        if lidClosedTimerMode && timeoutValue == nil {
+            sendNotification(
+                title: "Caffinate",
+                body: "Lid closed mode requires a timeout. Enable Timeout (seconds) and set a value > 0."
+            )
+            return
+        }
+        if lidClosedTimerMode {
+            options.insert(.preventSystemSleepOnAC)
+        } else {
+            options.remove(.preventSystemSleepOnAC)
+        }
         let args = buildArguments()
         let task = Process()
         task.executableURL = URL(fileURLWithPath: caffeinatePath)
@@ -220,11 +294,13 @@ final class CaffeinateManager: ObservableObject {
                 if process.terminationStatus == 0 {
                     UserDefaults.standard.set(true, forKey: Self.lockScreenSetupDoneKey)
                     self.lockScreenSetupDone = true
+                    self.lockScreenPasswordReentryNeeded = false
                     if self.isActive {
                         self.setLockScreenMessage("Caffinate is keeping this Mac awake")
                     }
                     self.sendNotification(title: "Caffinate", body: "Lock screen setup complete. Start/stop won’t ask for your password.")
                 } else {
+                    self.lockScreenPasswordReentryNeeded = true
                     self.sendNotification(title: "Caffinate", body: "Lock screen setup failed. You may need to enter your password when starting or stopping.")
                 }
             }
@@ -239,15 +315,21 @@ final class CaffeinateManager: ObservableObject {
     /// Sets or clears the lock screen message. Uses sudo + helper (no prompt) when setup was done on toggle.
     func setLockScreenMessage(_ message: String) {
         guard let scriptPath = lockScreenHelperPath, lockScreenSetupDone else { return }
+        let lockScreenSetupDoneKey = Self.lockScreenSetupDoneKey
         let task = Process()
         task.executableURL = URL(fileURLWithPath: "/usr/bin/sudo")
         task.arguments = ["/bin/bash", scriptPath, message]
         task.terminationHandler = { [weak self] process in
-            guard process.terminationStatus != 0 else { return }
+            guard let self, process.terminationStatus != 0 else { return }
             Task { @MainActor in
-                self?.sendNotification(
+                // If sudo fails (e.g. password required again), mark setup as not complete
+                // so the UI can offer re-entering the password.
+                UserDefaults.standard.set(false, forKey: lockScreenSetupDoneKey)
+                self.lockScreenSetupDone = false
+                self.lockScreenPasswordReentryNeeded = true
+                self.sendNotification(
                     title: "Caffinate",
-                    body: "Could not update lock screen. Turn the lock screen option off and on again to re-enter your password."
+                    body: "Could not update lock screen. Use the 'Re-enter password' button in the app to try again."
                 )
             }
         }

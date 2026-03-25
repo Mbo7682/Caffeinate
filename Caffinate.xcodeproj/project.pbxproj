@@ -10,6 +10,7 @@
 		CAFF000000000000000001 /* CaffinateApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = CAFF000000000000000002 /* CaffinateApp.swift */; };
 		CAFF000000000000000003 /* PopoverView.swift in Sources */ = {isa = PBXBuildFile; fileRef = CAFF000000000000000004 /* PopoverView.swift */; };
 		CAFF000000000000000005 /* CaffeinateManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = CAFF000000000000000006 /* CaffeinateManager.swift */; };
+		CAFF00000000000000001E /* UpdateChecker.swift in Sources */ = {isa = PBXBuildFile; fileRef = CAFF00000000000000001D /* UpdateChecker.swift */; };
 		CAFF000000000000000017 /* set-lock-message.sh in Resources */ = {isa = PBXBuildFile; fileRef = CAFF000000000000000018 /* set-lock-message.sh */; };
 		CAFF00000000000000001A /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = CAFF000000000000000019 /* Assets.xcassets */; };
 		CAFF00000000000000001B /* AppIcon.icns in Resources */ = {isa = PBXBuildFile; fileRef = CAFF00000000000000001C /* AppIcon.icns */; };
@@ -20,6 +21,7 @@
 		CAFF000000000000000002 /* CaffinateApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CaffinateApp.swift; sourceTree = "<group>"; };
 		CAFF000000000000000004 /* PopoverView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PopoverView.swift; sourceTree = "<group>"; };
 		CAFF000000000000000006 /* CaffeinateManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CaffeinateManager.swift; sourceTree = "<group>"; };
+		CAFF00000000000000001D /* UpdateChecker.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UpdateChecker.swift; sourceTree = "<group>"; };
 		CAFF00000000000000000A /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		CAFF000000000000000018 /* set-lock-message.sh */ = {isa = PBXFileReference; lastKnownFileType = text.script-sh; path = "set-lock-message.sh"; sourceTree = "<group>"; };
 		CAFF000000000000000019 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
@@ -43,6 +45,7 @@
 				CAFF000000000000000002 /* CaffinateApp.swift */,
 				CAFF000000000000000004 /* PopoverView.swift */,
 				CAFF000000000000000006 /* CaffeinateManager.swift */,
+				CAFF00000000000000001D /* UpdateChecker.swift */,
 				CAFF00000000000000000A /* Info.plist */,
 				CAFF000000000000000019 /* Assets.xcassets */,
 				CAFF00000000000000001C /* AppIcon.icns */,
@@ -136,6 +139,7 @@
 				CAFF000000000000000001 /* CaffinateApp.swift in Sources */,
 				CAFF000000000000000003 /* PopoverView.swift in Sources */,
 				CAFF000000000000000005 /* CaffeinateManager.swift in Sources */,
+				CAFF00000000000000001E /* UpdateChecker.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
