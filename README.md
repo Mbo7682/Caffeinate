@@ -2,7 +2,7 @@
 
 A small macOS menu bar app that runs the system `caffeinate` command so your Mac stays awake while locked. Uses a liquid-glass style UI and supports all caffeinate options.
 
-**Version:** 1.0.1 — see [CHANGELOG.md](CHANGELOG.md) for release history.
+**Version:** 1.0.2 — see [CHANGELOG.md](CHANGELOG.md) for release history.
 
 ## Features
 

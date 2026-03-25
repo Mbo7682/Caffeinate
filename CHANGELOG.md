@@ -2,6 +2,19 @@
 
 All notable changes to Caffinate are documented here. The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.0.2] - 2026-03-25
+
+### Added
+
+- Lid-closed keep-awake mode with a required timeout
+- GitHub releases version update check (shows “Updates” only when a newer release exists)
+- Right-click on the menu bar icon for quick Start/Stop
+- “Re-enter password” button when lock-screen sudo configuration needs credentials again
+
+### Changed
+
+- Popover UI tightened: Start/Stop moved into the header and updated styling
+
 ## [1.0.1] - 2026-03-03
 
 ### Added
