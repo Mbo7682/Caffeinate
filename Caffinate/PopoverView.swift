@@ -171,11 +171,11 @@ struct PopoverView: View {
 
     private var lockScreenSection: some View {
         VStack(alignment: .leading, spacing: 6) {
-            Toggle(isOn: $manager.showOnLockScreen) {
+            Toggle(isOn: $manager.lockScreenNotificationsEnabled) {
                 HStack(spacing: 6) {
                     Image(systemName: "lock.square")
                         .foregroundStyle(.secondary)
-                    Text("Show on lock screen")
+                    Text("Lock screen notifications")
                         .font(.subheadline)
                 }
             }
@@ -183,33 +183,7 @@ struct PopoverView: View {
             .padding(.horizontal, 16)
             .padding(.top, 12)
 
-            if manager.showOnLockScreen, manager.lockScreenSetupDone {
-                Label("Password not needed for start/stop", systemImage: "checkmark.circle.fill")
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
-                    .padding(.horizontal, 16)
-            }
-
-            if manager.showOnLockScreen, (!manager.lockScreenSetupDone || manager.lockScreenPasswordReentryNeeded) {
-                Button {
-                    manager.runLockScreenOneTimeSetup()
-                } label: {
-                    HStack(spacing: 6) {
-                        Image(systemName: "key.fill")
-                            .foregroundStyle(.secondary)
-                        Text("Re-enter password")
-                            .font(.subheadline)
-                            .foregroundStyle(.secondary)
-                    }
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.vertical, 6)
-                }
-                .buttonStyle(.plain)
-                .padding(.horizontal, 16)
-                .padding(.top, 2)
-            }
-
-            Text("Shows “Caffinate is keeping this Mac awake” on the lock screen. You’ll be asked for your password only when you turn this option on.")
+            Text("Sends a notification when you lock the screen (while active) and 10 seconds before a timed run ends.")
                 .font(.caption2)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)

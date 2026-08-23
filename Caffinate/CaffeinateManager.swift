@@ -4,23 +4,18 @@ import UserNotifications
 /// Runs and stops the system caffeinate command with configurable options.
 @MainActor
 final class CaffeinateManager: ObservableObject {
-    private static let showOnLockScreenKey = "showOnLockScreen"
     private static let lidClosedTimerModeKey = "lidClosedTimerMode"
+    private static let lockScreenNotificationsEnabledKey = "lockScreenNotificationsEnabled"
+    private static let endingSoonNotificationId = "caffinate-ending-soon"
+    private static let notificationHistoryClearDelaySeconds: TimeInterval = 35
 
-    /// When true, sets the system lock screen message so it's visible when the Mac is locked.
-    @Published var showOnLockScreen: Bool {
+    private let screenLockedNotificationName = Notification.Name("com.apple.screenIsLocked")
+    private var screenLockObserver: NSObjectProtocol?
+
+    /// When true, uses notifications that appear on the lock screen.
+    @Published var lockScreenNotificationsEnabled: Bool {
         didSet {
-            UserDefaults.standard.set(showOnLockScreen, forKey: Self.showOnLockScreenKey)
-            if showOnLockScreen {
-                // Only prompt when the toggle is turned on (one-time setup for password-free start/stop).
-                runLockScreenOneTimeSetup()
-            }
-            if !showOnLockScreen {
-                lockScreenPasswordReentryNeeded = false
-            }
-            if isActive {
-                setLockScreenMessage(showOnLockScreen ? "Caffinate is keeping this Mac awake" : "")
-            }
+            UserDefaults.standard.set(lockScreenNotificationsEnabled, forKey: Self.lockScreenNotificationsEnabledKey)
         }
     }
 
@@ -37,64 +32,26 @@ final class CaffeinateManager: ObservableObject {
         }
     }
 
-    private static let lockScreenSetupDoneKey = "lockScreenSudoersSetupDone"
-
-    /// True after the user has completed one-time setup (when they toggled "Show on lock screen" on).
-    @Published private(set) var lockScreenSetupDone: Bool = false
-    /// True when lock-screen sudo configuration needs the user to re-enter their admin password.
-    @Published private(set) var lockScreenPasswordReentryNeeded: Bool = false
-
-    private let lockScreenHelperPath: String? = {
-        Bundle.main.path(forResource: "set-lock-message", ofType: "sh")
-    }()
-
     init() {
-        self.showOnLockScreen = UserDefaults.standard.bool(forKey: Self.showOnLockScreenKey)
+        self.lockScreenNotificationsEnabled = UserDefaults.standard.bool(forKey: Self.lockScreenNotificationsEnabledKey)
         self.lidClosedTimerMode = UserDefaults.standard.bool(forKey: Self.lidClosedTimerModeKey)
-        self.lockScreenSetupDone = UserDefaults.standard.bool(forKey: Self.lockScreenSetupDoneKey)
-        if lockScreenSetupDone && lockScreenHelperPath == nil {
-            self.lockScreenSetupDone = false
-            UserDefaults.standard.set(false, forKey: Self.lockScreenSetupDoneKey)
-        }
         if lidClosedTimerMode {
             options.insert(.preventSystemSleepOnAC)
         }
-
-        // If the user previously enabled "Show on lock screen", proactively detect
-        // whether sudo permissions still require a password so the UI can show
-        // "Re-enter password" immediately (without waiting for Start).
-        if showOnLockScreen, lockScreenSetupDone {
-            probeLockScreenPasswordRequirement()
+        // Keep Notification Center history clean on launch.
+        UNUserNotificationCenter.current().removeAllDeliveredNotifications()
+        screenLockObserver = DistributedNotificationCenter.default().addObserver(
+            forName: screenLockedNotificationName,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            self?.handleScreenLocked()
         }
     }
 
-    /// Uses `sudo -n` to check whether the helper command requires the admin password.
-    /// Does not prompt; on failure we surface the "Re-enter password" UI.
-    private func probeLockScreenPasswordRequirement() {
-        guard let scriptPath = lockScreenHelperPath else { return }
-
-        let task = Process()
-        task.executableURL = URL(fileURLWithPath: "/usr/bin/sudo")
-        task.arguments = ["-n", "/bin/bash", scriptPath, ""]
-        task.terminationHandler = { [weak self] process in
-            guard let self else { return }
-            let status = process.terminationStatus
-            Task { @MainActor in
-                // Only update the re-entry flag; keep `lockScreenSetupDone` as-is.
-                self.lockScreenPasswordReentryNeeded = status != 0
-                if status != 0 {
-                    self.sendNotification(
-                        title: "Caffinate",
-                        body: "Lock screen permissions need your admin password. Open the app and use “Re-enter password”."
-                    )
-                }
-            }
-        }
-
-        do {
-            try task.run()
-        } catch {
-            // If probing fails for some reason, keep the existing state rather than changing flags incorrectly.
+    deinit {
+        if let screenLockObserver {
+            DistributedNotificationCenter.default().removeObserver(screenLockObserver)
         }
     }
     enum Option: String, CaseIterable {
@@ -169,12 +126,7 @@ final class CaffeinateManager: ObservableObject {
                 self?.remainingSeconds = 0
                 self?.process = nil
                 self?.isActive = false
-                // Clear lock screen message when process terminates (delay ensures it executes)
-                if self?.showOnLockScreen ?? false {
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-                        self?.setLockScreenMessage("")
-                    }
-                }
+                UNUserNotificationCenter.current().removePendingNotificationRequests(withIdentifiers: [Self.endingSoonNotificationId])
                 self?.sendNotification(title: "Caffinate", body: "Keep-awake stopped.")
             }
         }
@@ -187,6 +139,7 @@ final class CaffeinateManager: ObservableObject {
             if let timeout = timeoutValue {
                 startTime = Date()
                 remainingSeconds = timeout
+                scheduleEndingSoonNotification(timeoutSeconds: timeout)
                 countdownTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
                     guard let self = self else { return }
                     let elapsed = Int(Date().timeIntervalSince(self.startTime ?? Date()))
@@ -197,11 +150,6 @@ final class CaffeinateManager: ObservableObject {
                         self.countdownTimer = nil
                     }
                 }
-            }
-            
-            if showOnLockScreen {
-                let message = buildLockScreenMessage()
-                setLockScreenMessage(message)
             }
             sendNotification(title: "Caffinate", body: "Mac will stay awake while locked.")
         } catch {
@@ -214,9 +162,7 @@ final class CaffeinateManager: ObservableObject {
         countdownTimer = nil
         startTime = nil
         remainingSeconds = 0
-        if showOnLockScreen {
-            setLockScreenMessage("")
-        }
+        UNUserNotificationCenter.current().removePendingNotificationRequests(withIdentifiers: [Self.endingSoonNotificationId])
         process?.terminate()
         process = nil
         isActive = false
@@ -253,6 +199,7 @@ final class CaffeinateManager: ObservableObject {
             content.sound = .default
             let request = UNNotificationRequest(identifier: UUID().uuidString, content: content, trigger: nil)
             UNUserNotificationCenter.current().add(request)
+            self.scheduleNotificationHistoryCleanup(after: Self.notificationHistoryClearDelaySeconds)
         }
     }
 
@@ -261,85 +208,47 @@ final class CaffeinateManager: ObservableObject {
         _ = try? await center.requestAuthorization(options: [.alert, .sound])
     }
 
-    // MARK: - Lock screen message
+    private func scheduleEndingSoonNotification(timeoutSeconds: Int) {
+        guard lockScreenNotificationsEnabled else { return }
+        guard timeoutSeconds > 10 else { return }
 
-    private func buildLockScreenMessage() -> String {
-        if let timeout = timeoutValue, let startTime = startTime {
-            let endTime = startTime.addingTimeInterval(TimeInterval(timeout))
-            let formatter = DateFormatter()
-            formatter.dateFormat = "HH:mm"
-            let endTimeString = formatter.string(from: endTime)
-            return "Caffinate is keeping awake until \(endTimeString)"
-        }
-        return "Caffinate is keeping this Mac awake"
+        let trigger = UNTimeIntervalNotificationTrigger(
+            timeInterval: TimeInterval(timeoutSeconds - 10),
+            repeats: false
+        )
+
+        let content = UNMutableNotificationContent()
+        content.title = "Caffinate"
+        content.body = "Ending in 10 seconds."
+        content.sound = .default
+
+        let request = UNNotificationRequest(
+            identifier: Self.endingSoonNotificationId,
+            content: content,
+            trigger: trigger
+        )
+        UNUserNotificationCenter.current().add(request)
+        scheduleNotificationHistoryCleanup(
+            after: TimeInterval(timeoutSeconds - 10) + Self.notificationHistoryClearDelaySeconds
+        )
     }
 
-    /// One-time setup when user toggles "Show on lock screen" on: installs sudoers rule so start/stop don't prompt.
-    func runLockScreenOneTimeSetup() {
-        guard let scriptPath = lockScreenHelperPath else {
-            sendNotification(title: "Caffinate", body: "Helper script not found. Rebuild the app.")
-            return
+    private func handleScreenLocked() {
+        guard lockScreenNotificationsEnabled, isActive else { return }
+
+        // macOS controls the banner duration; this is intended as a brief reminder at lock time.
+        let body: String
+        if timeoutValue != nil, remainingSeconds > 0 {
+            body = "Caffinate is keeping your Mac awake. \(remainingSeconds)s remaining."
+        } else {
+            body = "Caffinate is keeping your Mac awake."
         }
-        let username = NSUserName()
-        let sudoersLine = "\(username) ALL=(ALL) NOPASSWD: /bin/bash \(scriptPath) *"
-            .replacingOccurrences(of: "'", with: "'\\''")
-        let installCommand = "echo '\(sudoersLine)' | tee /etc/sudoers.d/caffinate-lock-screen > /dev/null && chmod 440 /etc/sudoers.d/caffinate-lock-screen"
-        let script = "do shell script \"\(installCommand.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "\"", with: "\\\""))\" with administrator privileges"
-        let task = Process()
-        task.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
-        task.arguments = ["-e", script]
-        task.terminationHandler = { [weak self] process in
-            Task { @MainActor in
-                guard let self = self else { return }
-                if process.terminationStatus == 0 {
-                    UserDefaults.standard.set(true, forKey: Self.lockScreenSetupDoneKey)
-                    self.lockScreenSetupDone = true
-                    self.lockScreenPasswordReentryNeeded = false
-                    if self.isActive {
-                        self.setLockScreenMessage("Caffinate is keeping this Mac awake")
-                    }
-                    self.sendNotification(title: "Caffinate", body: "Lock screen setup complete. Start/stop won’t ask for your password.")
-                } else {
-                    self.lockScreenPasswordReentryNeeded = true
-                    self.sendNotification(title: "Caffinate", body: "Lock screen setup failed. You may need to enter your password when starting or stopping.")
-                }
-            }
-        }
-        do {
-            try task.run()
-        } catch {
-            sendNotification(title: "Caffinate", body: "Setup failed: \(error.localizedDescription)")
-        }
+        sendNotification(title: "Caffinate", body: body)
     }
 
-    /// Sets or clears the lock screen message. Uses sudo + helper (no prompt) when setup was done on toggle.
-    func setLockScreenMessage(_ message: String) {
-        guard let scriptPath = lockScreenHelperPath, lockScreenSetupDone else { return }
-        let lockScreenSetupDoneKey = Self.lockScreenSetupDoneKey
-        let task = Process()
-        task.executableURL = URL(fileURLWithPath: "/usr/bin/sudo")
-        task.arguments = ["/bin/bash", scriptPath, message]
-        task.terminationHandler = { [weak self] process in
-            guard let self, process.terminationStatus != 0 else { return }
-            Task { @MainActor in
-                // If sudo fails (e.g. password required again), mark setup as not complete
-                // so the UI can offer re-entering the password.
-                UserDefaults.standard.set(false, forKey: lockScreenSetupDoneKey)
-                self.lockScreenSetupDone = false
-                self.lockScreenPasswordReentryNeeded = true
-                self.sendNotification(
-                    title: "Caffinate",
-                    body: "Could not update lock screen. Use the 'Re-enter password' button in the app to try again."
-                )
-            }
-        }
-        do {
-            try task.run()
-        } catch {
-            sendNotification(
-                title: "Caffinate",
-                body: "Could not update lock screen: \(error.localizedDescription)"
-            )
+    private func scheduleNotificationHistoryCleanup(after delay: TimeInterval) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
+            UNUserNotificationCenter.current().removeAllDeliveredNotifications()
         }
     }
 }
