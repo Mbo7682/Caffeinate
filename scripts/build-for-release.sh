@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
 # Build Caffinate for Release and package it for sharing.
+# Intermediate Xcode output lives under build/ (gitignored); the only packaged
+# copy to ship or install from is dist/Caffinate.app (+ dist/Caffinate-macOS.zip).
 # Run from the project root (directory containing Caffinate.xcodeproj).
 # Requires Xcode (xcode-select pointing at Xcode.app).
 
@@ -33,6 +35,7 @@ cp -R "$APP_PATH" "$OUTPUT_DIR/"
 
 echo "Creating $OUTPUT_DIR/$ZIP_NAME ..."
 cd "$OUTPUT_DIR"
+rm -f "$ZIP_NAME"
 zip -r -y "$ZIP_NAME" "Caffinate.app"
 cd "$PROJECT_DIR"
 

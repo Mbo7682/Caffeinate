@@ -9,6 +9,15 @@ dist/
 *.xcuserstate
 xcuserdata/
 DerivedData/
+*.moved-aside
+*.pbxuser
+!default.pbxuser
 
 # macOS
 .DS_Store
+
+# Secrets / local
+.env
+*.pem
+*.p12
+AuthKey_*.p8

@@ -17,7 +17,7 @@ final class UpdateChecker: ObservableObject {
     private let repo: String
 
     init(
-        owner: String = "Mbo7682",
+        owner: String = "thomasfrisk",
         repo: String = "Caffeinate",
         session: URLSession = .shared
     ) {
@@ -25,7 +25,6 @@ final class UpdateChecker: ObservableObject {
         self.repo = repo
         self.session = session
 
-        // Auto-check on app launch so the header button is immediately accurate.
         Task { [weak self] in
             guard let self else { return }
             await self.check()
@@ -33,7 +32,8 @@ final class UpdateChecker: ObservableObject {
     }
 
     func check() async {
-        let current = (Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let current = (Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String)?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
         let currentVersion = (current?.isEmpty == false) ? current! : "0.0.0"
 
         state = .checking
@@ -49,6 +49,11 @@ final class UpdateChecker: ObservableObject {
                 return
             }
             guard (200...299).contains(http.statusCode) else {
+                // No releases yet on the fork is common — treat as up to date.
+                if http.statusCode == 404 {
+                    state = .upToDate(current: currentVersion)
+                    return
+                }
                 state = .failed(message: "GitHub check failed (\(http.statusCode)).")
                 return
             }
@@ -64,7 +69,7 @@ final class UpdateChecker: ObservableObject {
                 return
             }
 
-            if Self.isNewer(latestVersion, than: currentVersion) {
+            if VersionCompare.isNewer(latestVersion, than: currentVersion) {
                 state = .updateAvailable(current: currentVersion, latest: latestVersion, url: releaseUrl)
             } else {
                 state = .upToDate(current: currentVersion)
@@ -85,20 +90,4 @@ final class UpdateChecker: ObservableObject {
             case htmlUrl = "html_url"
         }
     }
-
-    private static func isNewer(_ a: String, than b: String) -> Bool {
-        func parts(_ s: String) -> [Int] {
-            s.split(separator: ".").map { Int($0) ?? 0 }
-        }
-        let ap = parts(a)
-        let bp = parts(b)
-        let n = max(ap.count, bp.count)
-        for i in 0..<n {
-            let ai = i < ap.count ? ap[i] : 0
-            let bi = i < bp.count ? bp[i] : 0
-            if ai != bi { return ai > bi }
-        }
-        return false
-    }
 }
-
