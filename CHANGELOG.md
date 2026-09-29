@@ -2,6 +2,12 @@
 
 All notable changes to Caffinate are documented here. The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [2.3.6] - 2026-09-29
+
+### Changed
+
+- Menu icons are all emoji-style (consistent color glyphs; dropped flat mono symbols)
+
 ## [2.3.5] - 2026-09-29
 
 ### Fixed

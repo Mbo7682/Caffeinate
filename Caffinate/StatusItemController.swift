@@ -10,24 +10,22 @@ private enum SettingsMenuTag: Int {
     case deactivateOnPowerDisconnect
 }
 
-/// Leading glyphs that render inside `NSMenuItem.title`.
-///
-/// On recent macOS, `NSMenuItem.image` is unreliable for status-item menus
-/// (SF Symbol images often never reserve an icon column). Title glyphs always show.
+/// Leading emoji for status-item menu titles (NSMenuItem.image is unreliable here).
+/// Keep these colorful/emoji-style for a consistent, scannable look.
 private enum MenuGlyph {
     static let awake = "☕️"
-    static let duration = "⏱"
-    static let settings = "⚙"
-    static let update = "⬇"
-    static let indefinite = "∞"
-    static let timed = "⏲"
-    static let login = "⏻"
-    static let launch = "⚡"
-    static let display = "☀"
+    static let duration = "⏱️"
+    static let settings = "⚙️"
+    static let update = "⬇️"
+    static let indefinite = "♾️"
+    static let timed = "⏲️"
+    static let login = "🚀"
+    static let launch = "⚡️"
+    static let display = "☀️"
     static let bell = "🔔"
     static let plugIn = "🔌"
     static let unplug = "🔋"
-    static let info = "ℹ"
+    static let info = "ℹ️"
 
     static func titled(_ glyph: String, _ title: String) -> String {
         "\(glyph)  \(title)"
