@@ -13,11 +13,35 @@ private enum SettingsMenuTag: Int {
 /// Shared template SF Symbols for menu items (Apple Menus HIG: icons sparingly, with purpose).
 private enum MenuSymbol {
     static func image(_ name: String, pointSize: CGFloat = 13) -> NSImage? {
-        let config = NSImage.SymbolConfiguration(pointSize: pointSize, weight: .regular)
-        guard let image = NSImage(systemSymbolName: name, accessibilityDescription: nil)?
+        let config = NSImage.SymbolConfiguration(pointSize: pointSize, weight: .medium)
+        guard let symbol = NSImage(systemSymbolName: name, accessibilityDescription: nil)?
             .withSymbolConfiguration(config) else { return nil }
-        image.isTemplate = true
-        return image
+
+        // AppKit status menus drop images that still have a zero/unset size (common with SF Symbols).
+        let canvas = NSSize(width: 16, height: 16)
+        let rendered = NSImage(size: canvas, flipped: false) { bounds in
+            let src = symbol.size
+            let scale = min(
+                bounds.width / max(src.width, 1),
+                bounds.height / max(src.height, 1)
+            )
+            let draw = NSSize(width: src.width * scale, height: src.height * scale)
+            let origin = NSPoint(
+                x: (bounds.width - draw.width) / 2,
+                y: (bounds.height - draw.height) / 2
+            )
+            symbol.draw(
+                in: NSRect(origin: origin, size: draw),
+                from: .zero,
+                operation: .sourceOver,
+                fraction: 1,
+                respectFlipped: true,
+                hints: [.interpolation: NSNumber(value: NSImageInterpolation.high.rawValue)]
+            )
+            return true
+        }
+        rendered.isTemplate = true
+        return rendered
     }
 }
 
@@ -132,14 +156,12 @@ final class StatusItemController: NSObject, NSMenuDelegate {
 
         // Show current selection on the parent (common status-menu pattern).
         let duration = NSMenuItem(
-            title: "Duration",
+            title: "Duration — \(manager.duration.menuTitle)",
             action: nil,
             keyEquivalent: ""
         )
         duration.image = MenuSymbol.image("timer")
         duration.submenu = makeDurationMenu()
-        // Trailing hint via tool tip; submenu checkmarks carry the selection.
-        duration.toolTip = manager.duration.menuTitle
         menu.addItem(duration)
 
         let settings = NSMenuItem(title: "Settings", action: nil, keyEquivalent: "")

@@ -2,6 +2,16 @@
 
 All notable changes to Caffinate are documented here. The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [2.3.4] - 2026-09-29
+
+### Fixed
+
+- Menu SF Symbol icons now render (explicit 16×16 template images — AppKit was dropping zero-size symbols)
+
+### Changed
+
+- Duration parent title shows the current selection (e.g. “Duration — Indefinitely”)
+
 ## [2.3.3] - 2026-09-29
 
 ### Added
