@@ -2,6 +2,12 @@
 
 All notable changes to Caffinate are documented here. The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [2.3.5] - 2026-09-29
+
+### Fixed
+
+- Menu icons now use title glyphs — `NSMenuItem.image` does not render in status-item menus on recent macOS
+
 ## [2.3.4] - 2026-09-29
 
 ### Fixed

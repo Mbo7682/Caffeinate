@@ -66,15 +66,6 @@ enum SessionDuration: Equatable, Hashable, Codable {
         }
     }
 
-    /// SF Symbol for duration menu rows (scannable presets).
-    var menuSymbolName: String {
-        switch self {
-        case .indefinite: return "infinity"
-        case .minutes(15), .minutes(30), .minutes(45): return "clock"
-        case .minutes: return "clock.badge"
-        }
-    }
-
     static let presets: [SessionDuration] = [
         .indefinite,
         .minutes(15),

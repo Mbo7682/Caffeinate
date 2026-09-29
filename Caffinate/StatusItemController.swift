@@ -10,38 +10,27 @@ private enum SettingsMenuTag: Int {
     case deactivateOnPowerDisconnect
 }
 
-/// Shared template SF Symbols for menu items (Apple Menus HIG: icons sparingly, with purpose).
-private enum MenuSymbol {
-    static func image(_ name: String, pointSize: CGFloat = 13) -> NSImage? {
-        let config = NSImage.SymbolConfiguration(pointSize: pointSize, weight: .medium)
-        guard let symbol = NSImage(systemSymbolName: name, accessibilityDescription: nil)?
-            .withSymbolConfiguration(config) else { return nil }
+/// Leading glyphs that render inside `NSMenuItem.title`.
+///
+/// On recent macOS, `NSMenuItem.image` is unreliable for status-item menus
+/// (SF Symbol images often never reserve an icon column). Title glyphs always show.
+private enum MenuGlyph {
+    static let awake = "☕️"
+    static let duration = "⏱"
+    static let settings = "⚙"
+    static let update = "⬇"
+    static let indefinite = "∞"
+    static let timed = "⏲"
+    static let login = "⏻"
+    static let launch = "⚡"
+    static let display = "☀"
+    static let bell = "🔔"
+    static let plugIn = "🔌"
+    static let unplug = "🔋"
+    static let info = "ℹ"
 
-        // AppKit status menus drop images that still have a zero/unset size (common with SF Symbols).
-        let canvas = NSSize(width: 16, height: 16)
-        let rendered = NSImage(size: canvas, flipped: false) { bounds in
-            let src = symbol.size
-            let scale = min(
-                bounds.width / max(src.width, 1),
-                bounds.height / max(src.height, 1)
-            )
-            let draw = NSSize(width: src.width * scale, height: src.height * scale)
-            let origin = NSPoint(
-                x: (bounds.width - draw.width) / 2,
-                y: (bounds.height - draw.height) / 2
-            )
-            symbol.draw(
-                in: NSRect(origin: origin, size: draw),
-                from: .zero,
-                operation: .sourceOver,
-                fraction: 1,
-                respectFlipped: true,
-                hints: [.interpolation: NSNumber(value: NSImageInterpolation.high.rawValue)]
-            )
-            return true
-        }
-        rendered.isTemplate = true
-        return rendered
+    static func titled(_ glyph: String, _ title: String) -> String {
+        "\(glyph)  \(title)"
     }
 }
 
@@ -117,7 +106,6 @@ final class StatusItemController: NSObject, NSMenuDelegate {
             return false
         }()
 
-        // Template glyph — system tints for light/dark menu bar and highlight (HIG).
         let symbolName = manager.isActive ? "cup.and.heat.waves.fill" : "cup.and.heat.waves"
         let config = NSImage.SymbolConfiguration(pointSize: 14, weight: .medium)
         guard let image = NSImage(systemSymbolName: symbolName, accessibilityDescription: "Caffinate")?
@@ -133,7 +121,6 @@ final class StatusItemController: NSObject, NSMenuDelegate {
     // MARK: - Menu
 
     func menuNeedsUpdate(_ menu: NSMenu) {
-        // Only rebuild the root status-item menu (not Duration/Settings submenus).
         guard menu == statusItem?.menu else { return }
         rebuildMenu(menu)
     }
@@ -141,31 +128,31 @@ final class StatusItemController: NSObject, NSMenuDelegate {
     private func rebuildMenu(_ menu: NSMenu) {
         menu.removeAllItems()
 
-        // Primary action — icon matches the menu-bar glyph (HIG: highlight key features).
         let keepAwake = NSMenuItem(
-            title: manager.menuToggleTitle,
+            title: MenuGlyph.titled(MenuGlyph.awake, manager.menuToggleTitle),
             action: #selector(toggleCaffeinate),
             keyEquivalent: ""
         )
         keepAwake.target = self
         keepAwake.state = manager.isActive ? .on : .off
-        keepAwake.image = MenuSymbol.image(
-            manager.isActive ? "cup.and.heat.waves.fill" : "cup.and.heat.waves"
-        )
         menu.addItem(keepAwake)
 
-        // Show current selection on the parent (common status-menu pattern).
         let duration = NSMenuItem(
-            title: "Duration — \(manager.duration.menuTitle)",
+            title: MenuGlyph.titled(
+                MenuGlyph.duration,
+                "Duration — \(manager.duration.menuTitle)"
+            ),
             action: nil,
             keyEquivalent: ""
         )
-        duration.image = MenuSymbol.image("timer")
         duration.submenu = makeDurationMenu()
         menu.addItem(duration)
 
-        let settings = NSMenuItem(title: "Settings", action: nil, keyEquivalent: "")
-        settings.image = MenuSymbol.image("gearshape")
+        let settings = NSMenuItem(
+            title: MenuGlyph.titled(MenuGlyph.settings, "Settings"),
+            action: nil,
+            keyEquivalent: ""
+        )
         settings.submenu = makeSettingsMenu()
         menu.addItem(settings)
 
@@ -173,18 +160,16 @@ final class StatusItemController: NSObject, NSMenuDelegate {
 
         if case .updateAvailable(_, let latest, let url) = updateChecker.state {
             let update = NSMenuItem(
-                title: "Update to v\(latest)…",
+                title: MenuGlyph.titled(MenuGlyph.update, "Update to v\(latest)…"),
                 action: #selector(openUpdate(_:)),
                 keyEquivalent: ""
             )
             update.target = self
             update.representedObject = url
-            update.image = MenuSymbol.image("arrow.down.circle")
             menu.addItem(update)
             menu.addItem(.separator())
         }
 
-        // Quit stays text-only — system convention; avoid icon noise on destructive exit.
         let quit = NSMenuItem(
             title: "Quit Caffinate",
             action: #selector(quitApp),
@@ -197,15 +182,15 @@ final class StatusItemController: NSObject, NSMenuDelegate {
     private func makeDurationMenu() -> NSMenu {
         let menu = NSMenu(title: "Duration")
         for (index, preset) in SessionDuration.presets.enumerated() {
+            let glyph = preset == .indefinite ? MenuGlyph.indefinite : MenuGlyph.timed
             let item = NSMenuItem(
-                title: preset.menuTitle,
+                title: MenuGlyph.titled(glyph, preset.menuTitle),
                 action: #selector(selectDuration(_:)),
                 keyEquivalent: ""
             )
             item.target = self
             item.tag = index
             item.state = manager.duration == preset ? .on : .off
-            item.image = MenuSymbol.image(preset.menuSymbolName)
             menu.addItem(item)
         }
         return menu
@@ -213,63 +198,34 @@ final class StatusItemController: NSObject, NSMenuDelegate {
 
     private func makeSettingsMenu() -> NSMenu {
         let menu = NSMenu(title: "Settings")
-        menu.addItem(settingsItem(
-            "Launch at Login",
-            symbol: "power.circle",
-            tag: .launchAtLogin,
-            on: manager.launchAtLogin
-        ))
-        menu.addItem(settingsItem(
-            "Activate at Launch",
-            symbol: "bolt.circle",
-            tag: .activateAtLaunch,
-            on: manager.activateAtLaunch
-        ))
-        menu.addItem(settingsItem(
-            "Allow Display Sleep",
-            symbol: "sun.max",
-            tag: .allowDisplaySleep,
-            on: manager.allowDisplaySleep
-        ))
-        menu.addItem(settingsItem(
-            "Allow Notifications",
-            symbol: "bell",
-            tag: .allowNotifications,
-            on: manager.allowNotifications
-        ))
+        menu.addItem(settingsItem(MenuGlyph.login, "Launch at Login", tag: .launchAtLogin, on: manager.launchAtLogin))
+        menu.addItem(settingsItem(MenuGlyph.launch, "Activate at Launch", tag: .activateAtLaunch, on: manager.activateAtLaunch))
+        menu.addItem(settingsItem(MenuGlyph.display, "Allow Display Sleep", tag: .allowDisplaySleep, on: manager.allowDisplaySleep))
+        menu.addItem(settingsItem(MenuGlyph.bell, "Allow Notifications", tag: .allowNotifications, on: manager.allowNotifications))
         menu.addItem(.separator())
-        menu.addItem(settingsItem(
-            "On Power Connect",
-            symbol: "cable.connector",
-            tag: .activateOnPowerConnect,
-            on: manager.activateOnPowerConnect
-        ))
-        menu.addItem(settingsItem(
-            "On Power Disconnect",
-            symbol: "battery.25",
-            tag: .deactivateOnPowerDisconnect,
-            on: manager.deactivateOnPowerDisconnect
-        ))
+        menu.addItem(settingsItem(MenuGlyph.plugIn, "On Power Connect", tag: .activateOnPowerConnect, on: manager.activateOnPowerConnect))
+        menu.addItem(settingsItem(MenuGlyph.unplug, "On Power Disconnect", tag: .deactivateOnPowerDisconnect, on: manager.deactivateOnPowerDisconnect))
 
-        let version = NSMenuItem(title: appVersionLabel, action: nil, keyEquivalent: "")
+        let version = NSMenuItem(
+            title: MenuGlyph.titled(MenuGlyph.info, appVersionLabel),
+            action: nil,
+            keyEquivalent: ""
+        )
         version.isEnabled = false
-        version.image = MenuSymbol.image("info.circle")
         menu.addItem(.separator())
         menu.addItem(version)
         return menu
     }
 
-    private func settingsItem(
-        _ title: String,
-        symbol: String,
-        tag: SettingsMenuTag,
-        on: Bool
-    ) -> NSMenuItem {
-        let item = NSMenuItem(title: title, action: #selector(toggleSetting(_:)), keyEquivalent: "")
+    private func settingsItem(_ glyph: String, _ title: String, tag: SettingsMenuTag, on: Bool) -> NSMenuItem {
+        let item = NSMenuItem(
+            title: MenuGlyph.titled(glyph, title),
+            action: #selector(toggleSetting(_:)),
+            keyEquivalent: ""
+        )
         item.target = self
         item.tag = tag.rawValue
         item.state = on ? .on : .off
-        item.image = MenuSymbol.image(symbol)
         return item
     }
 
