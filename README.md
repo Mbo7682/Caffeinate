@@ -4,7 +4,7 @@ Menu bar app that keeps your Mac awake so **processes keep running while locked*
 
 Uses a standard macOS menu bar menu (Apple HIG) wrapping `/usr/bin/caffeinate`, with live power-assertion health checks.
 
-**Version:** 2.4.0 — see [CHANGELOG.md](CHANGELOG.md).
+**Version:** 2.4.1 — see [CHANGELOG.md](CHANGELOG.md).
 
 ## Features
 

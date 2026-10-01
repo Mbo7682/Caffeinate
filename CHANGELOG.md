@@ -2,6 +2,13 @@
 
 All notable changes to Caffinate are documented here. The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [2.4.1] - 2026-10-01
+
+### Changed
+
+- Release builds are **Developer ID–signed and notarized** (Gatekeeper: Notarized Developer ID)
+- `scripts/build-for-release.sh` signs with Developer ID and notarizes when App Store Connect API credentials are present
+
 ## [2.4.0] - 2026-10-01
 
 ### Added
