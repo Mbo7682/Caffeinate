@@ -2,6 +2,13 @@
 
 All notable changes to Caffinate are documented here. The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [2.4.2] - 2026-10-01
+
+### Fixed
+
+- Update confirm / result alerts now bring Caffinate forward (menu-bar apps were hiding `NSAlert` sheets)
+- **Check for Updates…** shows a clear up-to-date, update-available, or error dialog
+
 ## [2.4.1] - 2026-10-01
 
 ### Changed

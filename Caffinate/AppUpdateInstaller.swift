@@ -21,6 +21,9 @@ enum AppUpdateInstaller {
         latest: String,
         prepareForQuit: () async -> Void
     ) async {
+        // Menu-bar (LSUIElement) apps are not key; alerts are invisible unless we activate.
+        NSApp.activate(ignoringOtherApps: true)
+
         let alert = NSAlert()
         alert.messageText = "Update to v\(latest)?"
         alert.informativeText = "Download and install Caffinate v\(latest)? The app will quit and reopen."
@@ -43,6 +46,7 @@ enum AppUpdateInstaller {
             await prepareForQuit()
             NSApp.terminate(nil)
         } catch {
+            NSApp.activate(ignoringOtherApps: true)
             let fail = NSAlert()
             fail.messageText = "Update failed"
             fail.informativeText = error.localizedDescription + "\n\nOpening the release page instead."

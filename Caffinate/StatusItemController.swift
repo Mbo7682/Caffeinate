@@ -313,7 +313,36 @@ final class StatusItemController: NSObject, NSMenuDelegate {
     }
 
     @objc private func checkForUpdates() {
-        Task { await updateChecker.check() }
+        Task { @MainActor in
+            await updateChecker.check()
+            switch updateChecker.state {
+            case .updateAvailable(_, let latest, let releaseURL, let assetURL):
+                await AppUpdateInstaller.confirmAndInstall(
+                    assetURL: assetURL,
+                    releaseURL: releaseURL,
+                    latest: latest,
+                    prepareForQuit: { [weak self] in
+                        if let manager = self?.manager {
+                            await manager.prepareForTermination()
+                        }
+                    }
+                )
+            case .upToDate(let current):
+                NSApp.activate(ignoringOtherApps: true)
+                let alert = NSAlert()
+                alert.messageText = "You're up to date"
+                alert.informativeText = "Caffinate \(current) is the latest version."
+                alert.runModal()
+            case .failed(let message):
+                NSApp.activate(ignoringOtherApps: true)
+                let alert = NSAlert()
+                alert.messageText = "Update check failed"
+                alert.informativeText = message
+                alert.runModal()
+            default:
+                break
+            }
+        }
     }
 
     @objc private func installUpdate(_ sender: NSMenuItem) {
