@@ -6,12 +6,23 @@ final class UpdateChecker: ObservableObject {
         case idle
         case checking
         case upToDate(current: String)
-        case updateAvailable(current: String, latest: String, url: URL)
+        case updateAvailable(current: String, latest: String, releaseURL: URL, assetURL: URL?)
         case failed(message: String)
+    }
+
+    struct GitHubAsset: Decodable, Equatable {
+        let name: String?
+        let browserDownloadUrl: String?
+
+        enum CodingKeys: String, CodingKey {
+            case name
+            case browserDownloadUrl = "browser_download_url"
+        }
     }
 
     @Published private(set) var state: State = .idle
 
+    private var periodicTask: Task<Void, Never>?
     private let session: URLSession
     private let owner: String
     private let repo: String
@@ -25,15 +36,38 @@ final class UpdateChecker: ObservableObject {
         self.repo = repo
         self.session = session
 
-        // Auto-check on app launch so the header button is immediately accurate.
         Task { [weak self] in
             guard let self else { return }
             await self.check()
         }
     }
 
+    func startPeriodicChecks(interval: TimeInterval = 86_400) {
+        periodicTask?.cancel()
+        periodicTask = Task { [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: UInt64(interval * 1_000_000_000))
+                guard let self, !Task.isCancelled else { return }
+                await self.check()
+            }
+        }
+    }
+
+    static func preferredZipAssetURL(from assets: [GitHubAsset]) -> URL? {
+        let zips = assets.compactMap { asset -> (String, URL)? in
+            guard let name = asset.name, name.lowercased().hasSuffix(".zip"),
+                  let s = asset.browserDownloadUrl, let url = URL(string: s) else { return nil }
+            return (name, url)
+        }
+        if let preferred = zips.first(where: { $0.0 == "Caffinate-macOS.zip" }) {
+            return preferred.1
+        }
+        return zips.first?.1
+    }
+
     func check() async {
-        let current = (Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let current = (Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String)?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
         let currentVersion = (current?.isEmpty == false) ? current! : "0.0.0"
 
         state = .checking
@@ -49,6 +83,11 @@ final class UpdateChecker: ObservableObject {
                 return
             }
             guard (200...299).contains(http.statusCode) else {
+                // No releases yet on the fork is common — treat as up to date.
+                if http.statusCode == 404 {
+                    state = .upToDate(current: currentVersion)
+                    return
+                }
                 state = .failed(message: "GitHub check failed (\(http.statusCode)).")
                 return
             }
@@ -58,14 +97,20 @@ final class UpdateChecker: ObservableObject {
             let latestVersion = latest.hasPrefix("v") ? String(latest.dropFirst()) : latest
             let htmlUrl = decoded.htmlUrl ?? "https://github.com/\(owner)/\(repo)/releases/latest"
             let releaseUrl = URL(string: htmlUrl) ?? URL(string: "https://github.com/\(owner)/\(repo)/releases/latest")!
+            let assetURL = Self.preferredZipAssetURL(from: decoded.assets ?? [])
 
             if latestVersion.isEmpty {
                 state = .failed(message: "No release version found.")
                 return
             }
 
-            if Self.isNewer(latestVersion, than: currentVersion) {
-                state = .updateAvailable(current: currentVersion, latest: latestVersion, url: releaseUrl)
+            if VersionCompare.isNewer(latestVersion, than: currentVersion) {
+                state = .updateAvailable(
+                    current: currentVersion,
+                    latest: latestVersion,
+                    releaseURL: releaseUrl,
+                    assetURL: assetURL
+                )
             } else {
                 state = .upToDate(current: currentVersion)
             }
@@ -78,27 +123,13 @@ final class UpdateChecker: ObservableObject {
         let tagName: String?
         let name: String?
         let htmlUrl: String?
+        let assets: [GitHubAsset]?
 
         enum CodingKeys: String, CodingKey {
             case tagName = "tag_name"
             case name
             case htmlUrl = "html_url"
+            case assets
         }
-    }
-
-    private static func isNewer(_ a: String, than b: String) -> Bool {
-        func parts(_ s: String) -> [Int] {
-            s.split(separator: ".").map { Int($0) ?? 0 }
-        }
-        let ap = parts(a)
-        let bp = parts(b)
-        let n = max(ap.count, bp.count)
-        for i in 0..<n {
-            let ai = i < ap.count ? ap[i] : 0
-            let bi = i < bp.count ? bp[i] : 0
-            if ai != bi { return ai > bi }
-        }
-        return false
     }
 }
-

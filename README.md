@@ -1,104 +1,51 @@
 # Caffinate
 
-A small macOS menu bar app that runs the system `caffeinate` command so your Mac stays awake while locked. Uses a liquid-glass style UI and supports all caffeinate options.
+Menu bar app that keeps your Mac awake so **processes keep running while locked**.
 
-**Version:** 1.0.2 — see [CHANGELOG.md](CHANGELOG.md) for release history.
+Uses a standard macOS menu bar menu (Apple HIG) wrapping `/usr/bin/caffeinate`, with live power-assertion health checks.
+
+**Version:** 2.4.0 — see [CHANGELOG.md](CHANGELOG.md).
 
 ## Features
 
-- **Menu bar only** — runs from the menu bar; no dock icon (`LSUIElement`)
-- **Caffeinate options** — Display (-d), Idle (-i), AC power (-s), User active (-u), Disk (-m)
-- **Optional timeout** — run for a set number of seconds (-t) with live countdown in the popover header
-- **Notifications** — notifies when keep-awake is started or stopped
-- **Show on lock screen** — optional: set the system lock screen message while running; with timeout enabled, the message includes the end time (for example, “keeping awake until 17:30”)
-- **SwiftUI** — frosted glass / ultra-thin material popover (liquid-glass style on recent macOS)
+- **Keep Mac Awake** checkmark (title shows until-when when active)
+- **Duration** submenu: indefinitely, 15m / 30m / 45m / 1h / 4h / 8h, **Until…** (clock time; past times roll to tomorrow)
+- **Settings** submenu: launch at login, activate at launch, display sleep, notifications, power plug/unplug
+- **Lock screen message** — while a session is active, sets the native macOS lock-screen text (`LoginwindowText`, same store as System Settings → Lock Screen). Indefinite sessions show a fixed message; timed / Until sessions include the end time. Restored when you stop or the session ends. First write may prompt for admin once; if the screen is already locked, unlock and lock once to see the new text.
+- **Live re-apply** — changing Allow Display Sleep or duration while keep-awake is on updates the running session without toggling off/on
+- **Check for Updates** / **Update to vX…** — downloads `Caffinate-macOS.zip` from [Mbo7682/Caffeinate](https://github.com/Mbo7682/Caffeinate/releases) and guides in-app replace
+- Template menu-bar cup icon (filled while active)
+- Safe quit (stops `caffeinate`)
 
-## v1.0.1 highlights
+Lid-closed / system-sleep (`-s`) mode is **not** included (removed in 2.0).
 
-- Timeout countdown shown in the popover header while active
-- Start/Stop button hit area fixed (entire button is clickable)
-- Active-state header fill improved for clearer running status
-- Lock screen message clears when caffeinate stops (including timeout completion)
-
-**Note about lock screen updates:** macOS lock screen text is rendered when the screen locks and does not live-refresh while already locked.
-
-## Requirements
-
-- macOS 14.0 (Sonoma) or later
-- Xcode 15+ to build
-
-## Prerequisites (one-time)
-
-To build this app you need **Xcode** (not only Command Line Tools). Prereqs that are already set up:
-
-- **Homebrew** and **mas** (Mac App Store CLI) are installed.
-
-To install Xcode (large download, ~12GB), run this in **Terminal** (so you can enter your password if prompted):
+## Install
 
 ```bash
-mas install 497799835
+./scripts/install.sh
+./scripts/install.sh --rebuild
 ```
 
-When the install finishes, point the active developer directory to Xcode:
+### Uninstall
 
 ```bash
-sudo xcode-select -s /Applications/Xcode.app/Contents/Developer
+rm -rf /Applications/Caffinate.app
+sudo rm -rf "/Library/Application Support/Caffinate" /etc/sudoers.d/caffinate-lock-screen
 ```
 
-Alternatively, install Xcode from the [Mac App Store](https://apps.apple.com/app/xcode/id497799835) in the usual way, then run the `xcode-select` command above.
+The second command removes the lock-screen helper the app installs on first use and the sudoers rule that lets it run without a password prompt. `./scripts/install.sh` also removes that rule so a replaced app re-registers it; expect one admin prompt after reinstalling.
 
-## Download (no build required)
+After updating via **Update to vX…**, macOS Gatekeeper may block the replaced app. If so, right-click **Caffinate.app** → **Open** once.
 
-A pre-built release is in the repo: **[release/Caffinate-macOS.zip](release/Caffinate-macOS.zip)**. Unzip it, move `Caffinate.app` to Applications (or leave in Downloads), and open it. If macOS blocks it, right‑click the app → **Open** → **Open**.
+## Development
 
-## Build and run
-
-1. Open `Caffinate.xcodeproj` in Xcode.
-2. Choose the **Caffinate** scheme and **My Mac** as destination.
-3. Press **Run** (⌘R).
-
-The app will appear in the menu bar. Click it to open the popover, choose options, and tap **Start** to run `caffeinate`. Allow notifications when prompted to get start/stop alerts.
-
-## Building for distribution (sharing with others)
-
-To build a **Release** version you can share (e.g. as a zip):
-
-**Option A – Script (recommended)**  
-From the project root, run:
+Open `Caffinate.xcodeproj` in Xcode 15+, or:
 
 ```bash
-./scripts/build-for-release.sh
+./scripts/install.sh --rebuild
 ```
 
-This builds the app and creates:
-- `dist/Caffinate.app` — the app bundle
-- `dist/Caffinate-macOS.zip` — ready to send
-
-**Option B – Xcode**  
-1. **Product → Scheme → Edit Scheme** → set **Run** to **Release** (or leave **Build Configuration** as Release for Archive).  
-2. **Product → Archive**.  
-3. In the Organizer window: **Distribute App** → **Copy App** (or **Custom** → export as Mac Application).  
-4. Zip the resulting `Caffinate.app` and share the zip.
-
-**For your friend**  
-- Unzip and move `Caffinate.app` to **Applications** (or keep it in Downloads).  
-- Double‑click to open. The app runs from the **menu bar** (no dock icon).  
-- If macOS says the app is from an unidentified developer: **right‑click** the app → **Open** → **Open** once; after that it will open normally.
-
-The app is not notarized, so Gatekeeper may require that one-time “Open” step.
-
-## Caffinate options (short reference)
-
-| Option     | Flag | Description                          |
-|-----------|------|--------------------------------------|
-| Display   | `-d` | Prevent display from sleeping        |
-| Idle      | `-i` | Prevent system from idle sleeping    |
-| AC power  | `-s` | Prevent system sleep (AC power only) |
-| User active| `-u` | Declare user active (default 5 s unless timeout set) |
-| Disk      | `-m` | Prevent disk from idle sleeping      |
-| Timeout   | `-t N` | Run for N seconds (optional)       |
-
-Default selection is **Display** and **Idle**, which is a good choice for “stay awake while locked.”
+Requires macOS 14+.
 
 ## License
 

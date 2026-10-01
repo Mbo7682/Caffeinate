@@ -1,345 +1,506 @@
 import Foundation
-import UserNotifications
+import AppKit
+import ServiceManagement
 
-/// Runs and stops the system caffeinate command with configurable options.
+/// Runs and stops the system `caffeinate` command for timed or indefinite sessions.
 @MainActor
 final class CaffeinateManager: ObservableObject {
-    private static let showOnLockScreenKey = "showOnLockScreen"
-    private static let lidClosedTimerModeKey = "lidClosedTimerMode"
+    private static let durationKey = "sessionDuration"
+    private static let allowDisplaySleepKey = "allowDisplaySleep"
+    private static let allowNotificationsKey = "allowNotifications"
+    private static let activateAtLaunchKey = "activateAtLaunch"
+    private static let activateOnPowerConnectKey = "activateOnPowerConnect"
+    private static let deactivateOnPowerDisconnectKey = "deactivateOnPowerDisconnect"
 
-    /// When true, sets the system lock screen message so it's visible when the Mac is locked.
-    @Published var showOnLockScreen: Bool {
-        didSet {
-            UserDefaults.standard.set(showOnLockScreen, forKey: Self.showOnLockScreenKey)
-            if showOnLockScreen {
-                // Only prompt when the toggle is turned on (one-time setup for password-free start/stop).
-                runLockScreenOneTimeSetup()
-            }
-            if !showOnLockScreen {
-                lockScreenPasswordReentryNeeded = false
-            }
-            if isActive {
-                setLockScreenMessage(showOnLockScreen ? "Caffinate is keeping this Mac awake" : "")
-            }
-        }
-    }
-
-    /// When enabled, start adds `-s` (AC-only system sleep prevention) so the Mac can stay awake with lid closed.
-    /// This is most useful when combined with a timeout.
-    @Published var lidClosedTimerMode: Bool {
-        didSet {
-            UserDefaults.standard.set(lidClosedTimerMode, forKey: Self.lidClosedTimerModeKey)
-            if lidClosedTimerMode {
-                options.insert(.preventSystemSleepOnAC)
-            } else {
-                options.remove(.preventSystemSleepOnAC)
-            }
-        }
-    }
-
-    private static let lockScreenSetupDoneKey = "lockScreenSudoersSetupDone"
-
-    /// True after the user has completed one-time setup (when they toggled "Show on lock screen" on).
-    @Published private(set) var lockScreenSetupDone: Bool = false
-    /// True when lock-screen sudo configuration needs the user to re-enter their admin password.
-    @Published private(set) var lockScreenPasswordReentryNeeded: Bool = false
-
-    private let lockScreenHelperPath: String? = {
-        Bundle.main.path(forResource: "set-lock-message", ofType: "sh")
-    }()
-
-    init() {
-        self.showOnLockScreen = UserDefaults.standard.bool(forKey: Self.showOnLockScreenKey)
-        self.lidClosedTimerMode = UserDefaults.standard.bool(forKey: Self.lidClosedTimerModeKey)
-        self.lockScreenSetupDone = UserDefaults.standard.bool(forKey: Self.lockScreenSetupDoneKey)
-        if lockScreenSetupDone && lockScreenHelperPath == nil {
-            self.lockScreenSetupDone = false
-            UserDefaults.standard.set(false, forKey: Self.lockScreenSetupDoneKey)
-        }
-        if lidClosedTimerMode {
-            options.insert(.preventSystemSleepOnAC)
-        }
-
-        // If the user previously enabled "Show on lock screen", proactively detect
-        // whether sudo permissions still require a password so the UI can show
-        // "Re-enter password" immediately (without waiting for Start).
-        if showOnLockScreen, lockScreenSetupDone {
-            probeLockScreenPasswordRequirement()
-        }
-    }
-
-    /// Uses `sudo -n` to check whether the helper command requires the admin password.
-    /// Does not prompt; on failure we surface the "Re-enter password" UI.
-    private func probeLockScreenPasswordRequirement() {
-        guard let scriptPath = lockScreenHelperPath else { return }
-
-        let task = Process()
-        task.executableURL = URL(fileURLWithPath: "/usr/bin/sudo")
-        task.arguments = ["-n", "/bin/bash", scriptPath, ""]
-        task.terminationHandler = { [weak self] process in
-            guard let self else { return }
-            let status = process.terminationStatus
-            Task { @MainActor in
-                // Only update the re-entry flag; keep `lockScreenSetupDone` as-is.
-                self.lockScreenPasswordReentryNeeded = status != 0
-                if status != 0 {
-                    self.sendNotification(
-                        title: "Caffinate",
-                        body: "Lock screen permissions need your admin password. Open the app and use “Re-enter password”."
-                    )
-                }
-            }
-        }
-
-        do {
-            try task.run()
-        } catch {
-            // If probing fails for some reason, keep the existing state rather than changing flags incorrectly.
-        }
-    }
-    enum Option: String, CaseIterable {
-        case preventDisplaySleep = "Display"
-        case preventIdleSleep = "Idle"
-        case preventSystemSleepOnAC = "System sleep"
-        case userActive = "User active"
-        case preventDiskSleep = "Disk"
-
-        var flag: String {
-            switch self {
-            case .preventDisplaySleep: return "d"
-            case .preventIdleSleep: return "i"
-            case .preventSystemSleepOnAC: return "s"
-            case .userActive: return "u"
-            case .preventDiskSleep: return "m"
-            }
-        }
-
-        var help: String {
-            switch self {
-            case .preventDisplaySleep: return "Keep display on"
-            case .preventIdleSleep: return "Prevent idle sleep"
-            case .preventSystemSleepOnAC: return "Prevent system sleep"
-            case .userActive: return "User active (set timeout or lasts 5 sec)"
-            case .preventDiskSleep: return "Prevent disk idle sleep"
-            }
-        }
-    }
-
-    @Published private(set) var isActive = false
-    @Published var options: Set<Option> = [.preventIdleSleep, .preventDisplaySleep]
-    @Published var timeoutSeconds: String = "" // empty = no timeout
-    @Published var hasTimeout: Bool = false
-    @Published private(set) var remainingSeconds: Int = 0
-
-    private var process: Process?
-    private var startTime: Date?
-    private var countdownTimer: Timer?
+    private let notifications = NotificationService()
+    private let lockScreen: LockScreenMessageService
+    private let now: () -> Date
     private let caffeinatePath = "/usr/bin/caffeinate"
 
-    var timeoutValue: Int? {
-        guard hasTimeout, let n = Int(timeoutSeconds.trimmingCharacters(in: .whitespaces)), n > 0 else { return nil }
-        return n
+    @Published private(set) var isActive = false
+    @Published private(set) var health: KeepAwakeHealth = .idle
+    @Published private(set) var sessionEndsAt: Date?
+    @Published private(set) var remainingSeconds: Int = 0
+
+    @Published var duration: SessionDuration {
+        didSet {
+            guard duration != oldValue else { return }
+            persistDuration()
+            if isActive {
+                restartForDurationChange()
+            }
+        }
+    }
+
+    /// When true, do not pass `-d` (display may sleep; Mac stays awake via `-i`).
+    @Published var allowDisplaySleep: Bool {
+        didSet {
+            guard allowDisplaySleep != oldValue else { return }
+            UserDefaults.standard.set(allowDisplaySleep, forKey: Self.allowDisplaySleepKey)
+            reapplyIfNeeded()
+        }
+    }
+
+    @Published var allowNotifications: Bool {
+        didSet {
+            guard allowNotifications != oldValue else { return }
+            UserDefaults.standard.set(allowNotifications, forKey: Self.allowNotificationsKey)
+            notifications.isEnabled = allowNotifications
+        }
+    }
+
+    @Published var activateAtLaunch: Bool {
+        didSet {
+            guard activateAtLaunch != oldValue else { return }
+            UserDefaults.standard.set(activateAtLaunch, forKey: Self.activateAtLaunchKey)
+        }
+    }
+
+    @Published var launchAtLogin: Bool = false {
+        didSet {
+            guard !isLoadingPreferences, launchAtLogin != oldValue else { return }
+            applyLaunchAtLogin(launchAtLogin)
+        }
+    }
+
+    @Published var activateOnPowerConnect: Bool {
+        didSet {
+            guard activateOnPowerConnect != oldValue else { return }
+            UserDefaults.standard.set(activateOnPowerConnect, forKey: Self.activateOnPowerConnectKey)
+        }
+    }
+
+    @Published var deactivateOnPowerDisconnect: Bool {
+        didSet {
+            guard deactivateOnPowerDisconnect != oldValue else { return }
+            UserDefaults.standard.set(deactivateOnPowerDisconnect, forKey: Self.deactivateOnPowerDisconnectKey)
+        }
+    }
+
+    private var process: Process?
+    private var healthMonitorTask: Task<Void, Never>?
+    private var countdownTask: Task<Void, Never>?
+    private var powerPollTask: Task<Void, Never>?
+    private var lockScreenTask: Task<Void, Never>?
+    private var userInitiatedStop = false
+    private var suppressTerminationNotification = false
+    private var isLoadingPreferences = true
+    private var lastOnAC: Bool?
+    private(set) var activeArguments: [String] = []
+    private var sessionStartedAt: Date?
+
+    var statusSubtitle: String {
+        if !isActive { return "Off" }
+        if case .broken(let reason) = health {
+            return "Not working · \(reason)"
+        }
+        if case .checking = health {
+            return "Starting…"
+        }
+        if let end = sessionEndsAt {
+            return "Active until \(Self.endTimeFormatter.string(from: end))"
+        }
+        return "Active · until you stop"
+    }
+
+    /// Single checkable menu title (status folded into “Keep Mac Awake”).
+    var menuToggleTitle: String {
+        if !isActive { return "Keep Mac Awake" }
+        if case .broken(let reason) = health {
+            return "Keep Mac Awake · not working (\(reason))"
+        }
+        if case .checking = health {
+            return "Keep Mac Awake · starting…"
+        }
+        if let end = sessionEndsAt {
+            return "Keep Mac Awake · until \(Self.endTimeFormatter.string(from: end))"
+        }
+        return "Keep Mac Awake · until you stop"
+    }
+
+    private static let endTimeFormatter: DateFormatter = {
+        let f = DateFormatter()
+        f.timeStyle = .short
+        f.dateStyle = .none
+        return f
+    }()
+
+    init(lockScreen: LockScreenMessageService, now: @escaping () -> Date = { Date() }) {
+        self.lockScreen = lockScreen
+        self.now = now
+
+        for key in [
+            "showOnLockScreen", "lidClosedTimerMode", "hasTimeout", "timeoutSeconds",
+            "lockScreenSudoersSetupDone", "caffeinateOptions"
+        ] {
+            UserDefaults.standard.removeObject(forKey: key)
+        }
+
+        if let data = UserDefaults.standard.data(forKey: Self.durationKey),
+           let decoded = try? JSONDecoder().decode(SessionDuration.self, from: data) {
+            // Drop removed 12h preset if it was saved previously.
+            if case .minutes(720) = decoded {
+                self.duration = .minutes(480)
+            } else {
+                self.duration = decoded
+            }
+        } else {
+            self.duration = .indefinite
+        }
+
+        self.allowDisplaySleep = UserDefaults.standard.object(forKey: Self.allowDisplaySleepKey) as? Bool ?? true
+        self.allowNotifications = UserDefaults.standard.object(forKey: Self.allowNotificationsKey) as? Bool ?? true
+        self.activateAtLaunch = UserDefaults.standard.bool(forKey: Self.activateAtLaunchKey)
+        self.activateOnPowerConnect = UserDefaults.standard.bool(forKey: Self.activateOnPowerConnectKey)
+        self.deactivateOnPowerDisconnect = UserDefaults.standard.bool(forKey: Self.deactivateOnPowerDisconnectKey)
+        self.launchAtLogin = (SMAppService.mainApp.status == .enabled)
+        notifications.isEnabled = allowNotifications
+        isLoadingPreferences = false
+        lastOnAC = isOnPowerAdapter()
+        startPowerPolling()
+    }
+
+    func desiredArguments(preservingRemaining: Int? = nil) -> [String] {
+        let timeout: Int?
+        if let preservingRemaining, preservingRemaining > 0 {
+            timeout = preservingRemaining
+        } else {
+            timeout = duration.seconds(from: now())
+        }
+        return CaffeinateCommandBuilder.buildArguments(
+            preventIdleSleep: true,
+            preventDisplaySleep: !allowDisplaySleep,
+            timeoutSeconds: timeout
+        ) + ["-w", "\(ProcessInfo.processInfo.processIdentifier)"]
+    }
+
+    /// Select a duration and start (or restart) keep-awake immediately.
+    func selectDuration(_ newDuration: SessionDuration) {
+        let changed = duration != newDuration
+        if changed {
+            duration = newDuration
+        }
+        if !isActive {
+            start()
+        } else if !changed {
+            restartForDurationChange()
+        }
+        // If changed while active, `duration` didSet already restarted.
+    }
+
+    func selectUntil(hour: Int, minute: Int) {
+        selectDuration(.until(hour: hour, minute: minute))
+    }
+
+    func setEnabled(_ enabled: Bool) {
+        if enabled { start() } else { stop() }
     }
 
     func start() {
         guard !isActive else { return }
-        // Lid-closed mode is intended for time-bounded “keep awake”.
-        // Enforce that a valid timeout is set; otherwise we risk an unintended indefinite keep-awake.
-        if lidClosedTimerMode && timeoutValue == nil {
-            sendNotification(
-                title: "Caffinate",
-                body: "Lid closed mode requires a timeout. Enable Timeout (seconds) and set a value > 0."
-            )
+        let args = desiredArguments()
+        guard CaffeinateCommandBuilder.hasEffectiveKeepAwakeFlags(args) else {
+            notify(title: "Caffinate", body: "Could not start keep-awake.")
             return
         }
-        if lidClosedTimerMode {
-            options.insert(.preventSystemSleepOnAC)
-        } else {
-            options.remove(.preventSystemSleepOnAC)
-        }
-        let args = buildArguments()
-        let task = Process()
-        task.executableURL = URL(fileURLWithPath: caffeinatePath)
-        task.arguments = args
-        task.terminationHandler = { [weak self] _ in
-            Task { @MainActor in
-                self?.countdownTimer?.invalidate()
-                self?.countdownTimer = nil
-                self?.startTime = nil
-                self?.remainingSeconds = 0
-                self?.process = nil
-                self?.isActive = false
-                // Clear lock screen message when process terminates (delay ensures it executes)
-                if self?.showOnLockScreen ?? false {
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-                        self?.setLockScreenMessage("")
-                    }
-                }
-                self?.sendNotification(title: "Caffinate", body: "Keep-awake stopped.")
-            }
-        }
-        do {
-            try task.run()
-            process = task
-            isActive = true
-            
-            // Start countdown timer if timeout is set
-            if let timeout = timeoutValue {
-                startTime = Date()
-                remainingSeconds = timeout
-                countdownTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
-                    guard let self = self else { return }
-                    let elapsed = Int(Date().timeIntervalSince(self.startTime ?? Date()))
-                    let remaining = max(0, timeout - elapsed)
-                    self.remainingSeconds = remaining
-                    if remaining <= 0 {
-                        self.countdownTimer?.invalidate()
-                        self.countdownTimer = nil
-                    }
-                }
-            }
-            
-            if showOnLockScreen {
-                let message = buildLockScreenMessage()
-                setLockScreenMessage(message)
-            }
-            sendNotification(title: "Caffinate", body: "Mac will stay awake while locked.")
-        } catch {
-            sendNotification(title: "Caffinate", body: "Failed to start: \(error.localizedDescription)")
-        }
+        spawn(with: args, notifyStarted: true, resetSessionClock: true)
     }
 
     func stop() {
-        countdownTimer?.invalidate()
-        countdownTimer = nil
-        startTime = nil
-        remainingSeconds = 0
-        if showOnLockScreen {
-            setLockScreenMessage("")
-        }
+        guard isActive || process != nil else { return }
+        userInitiatedStop = true
+        suppressTerminationNotification = false
+        teardownSessionMonitors(clearClock: true)
         process?.terminate()
         process = nil
         isActive = false
+        health = .idle
+        let pendingLockScreenTask = lockScreenTask
+        lockScreenTask = Task {
+            await pendingLockScreenTask?.value
+            await lockScreen.restoreAfterSession()
+        }
+        notify(title: "Caffinate", body: "Keep-awake stopped.")
     }
 
-    func toggle(_ option: Option) {
-        if options.contains(option) {
-            options.remove(option)
-        } else {
-            options.insert(option)
+    func prepareForTermination() async {
+        userInitiatedStop = true
+        suppressTerminationNotification = true
+        powerPollTask?.cancel()
+        teardownSessionMonitors(clearClock: true)
+        process?.terminate()
+        process = nil
+        isActive = false
+        health = .idle
+        activeArguments = []
+        let pendingLockScreenTask = lockScreenTask
+        lockScreenTask = Task {
+            await pendingLockScreenTask?.value
+            await lockScreen.restoreAfterSession()
         }
+        await lockScreenTask?.value
     }
 
-    private func buildArguments() -> [String] {
-        var args: [String] = []
-        for opt in Option.allCases where options.contains(opt) {
-            args.append("-\(opt.flag)")
+    func handleAppDidFinishLaunching() {
+        // A crash or force-quit leaves our message on the lock screen; put the old one back.
+        lockScreenTask = Task { [lockScreen] in
+            await lockScreen.reconcileAfterUnexpectedExit()
         }
-        if let t = timeoutValue {
-            args.append(contentsOf: ["-t", "\(t)"])
-        }
-        return args
-    }
-
-    private func sendNotification(title: String, body: String) {
-        UNUserNotificationCenter.current().getNotificationSettings { settings in
-            guard settings.authorizationStatus == .authorized else {
-                Task { @MainActor in await self.requestNotificationPermission() }
-                return
-            }
-            let content = UNMutableNotificationContent()
-            content.title = title
-            content.body = body
-            content.sound = .default
-            let request = UNNotificationRequest(identifier: UUID().uuidString, content: content, trigger: nil)
-            UNUserNotificationCenter.current().add(request)
+        if activateAtLaunch {
+            start()
         }
     }
 
     func requestNotificationPermission() async {
-        let center = UNUserNotificationCenter.current()
-        _ = try? await center.requestAuthorization(options: [.alert, .sound])
+        guard allowNotifications else { return }
+        await notifications.requestPermission()
     }
 
-    // MARK: - Lock screen message
-
-    private func buildLockScreenMessage() -> String {
-        if let timeout = timeoutValue, let startTime = startTime {
-            let endTime = startTime.addingTimeInterval(TimeInterval(timeout))
-            let formatter = DateFormatter()
-            formatter.dateFormat = "HH:mm"
-            let endTimeString = formatter.string(from: endTime)
-            return "Caffinate is keeping awake until \(endTimeString)"
-        }
-        return "Caffinate is keeping this Mac awake"
-    }
-
-    /// One-time setup when user toggles "Show on lock screen" on: installs sudoers rule so start/stop don't prompt.
-    func runLockScreenOneTimeSetup() {
-        guard let scriptPath = lockScreenHelperPath else {
-            sendNotification(title: "Caffinate", body: "Helper script not found. Rebuild the app.")
+    /// Re-spawn when option-only settings change (e.g. display sleep); preserves remaining timeout.
+    /// Duration / Until changes use `restartForDurationChange()` instead and reset the session clock.
+    func reapplyIfNeeded() {
+        guard isActive else { return }
+        // Derive from the session end so `.until` keeps its original end time.
+        let remaining = sessionEndsAt.map { max(1, Int($0.timeIntervalSince(now()))) }
+        let desired = desiredArguments(preservingRemaining: remaining)
+        guard CaffeinateCommandBuilder.hasEffectiveKeepAwakeFlags(desired) else {
+            stop()
             return
         }
-        let username = NSUserName()
-        let sudoersLine = "\(username) ALL=(ALL) NOPASSWD: /bin/bash \(scriptPath) *"
-            .replacingOccurrences(of: "'", with: "'\\''")
-        let installCommand = "echo '\(sudoersLine)' | tee /etc/sudoers.d/caffinate-lock-screen > /dev/null && chmod 440 /etc/sudoers.d/caffinate-lock-screen"
-        let script = "do shell script \"\(installCommand.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "\"", with: "\\\""))\" with administrator privileges"
+        guard desired != activeArguments else { return }
+        restart(with: desired, notify: false, resetSessionClock: false)
+    }
+
+    // MARK: - Private
+
+    private func restartForDurationChange() {
+        restart(with: desiredArguments(), notify: false, resetSessionClock: true)
+    }
+
+    private func restart(with args: [String], notify: Bool, resetSessionClock: Bool) {
+        suppressTerminationNotification = true
+        process?.terminate()
+        process = nil
+        spawn(with: args, notifyStarted: notify, resetSessionClock: resetSessionClock)
+    }
+
+    private func spawn(with args: [String], notifyStarted: Bool, resetSessionClock: Bool) {
         let task = Process()
-        task.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
-        task.arguments = ["-e", script]
-        task.terminationHandler = { [weak self] process in
+        task.executableURL = URL(fileURLWithPath: caffeinatePath)
+        task.arguments = args
+        task.terminationHandler = { [weak self] ended in
             Task { @MainActor in
-                guard let self = self else { return }
-                if process.terminationStatus == 0 {
-                    UserDefaults.standard.set(true, forKey: Self.lockScreenSetupDoneKey)
-                    self.lockScreenSetupDone = true
-                    self.lockScreenPasswordReentryNeeded = false
-                    if self.isActive {
-                        self.setLockScreenMessage("Caffinate is keeping this Mac awake")
-                    }
-                    self.sendNotification(title: "Caffinate", body: "Lock screen setup complete. Start/stop won’t ask for your password.")
+                self?.handleProcessEnded(for: ended)
+            }
+        }
+
+        do {
+            try task.run()
+            process = task
+            isActive = true
+            activeArguments = args
+            userInitiatedStop = false
+            suppressTerminationNotification = false
+            health = .checking
+            startHealthMonitor()
+
+            if resetSessionClock {
+                let startedAt = now()
+                sessionStartedAt = startedAt
+                if let seconds = duration.seconds(from: startedAt) {
+                    sessionEndsAt = startedAt.addingTimeInterval(TimeInterval(seconds))
+                    remainingSeconds = seconds
+                    startCountdown(total: seconds)
                 } else {
-                    self.lockScreenPasswordReentryNeeded = true
-                    self.sendNotification(title: "Caffinate", body: "Lock screen setup failed. You may need to enter your password when starting or stopping.")
+                    sessionEndsAt = nil
+                    remainingSeconds = 0
+                    countdownTask?.cancel()
+                    countdownTask = nil
+                }
+            } else if let start = sessionStartedAt, let end = sessionEndsAt {
+                // Keep the original end; recomputing `duration.seconds` would slide `.until` forward.
+                let total = max(0, Int(end.timeIntervalSince(start)))
+                remainingSeconds = max(0, Int(end.timeIntervalSince(now())))
+                startCountdown(total: total)
+            }
+
+            if notifyStarted {
+                notify(title: "Caffinate", body: "Processes keep running while the Mac is locked.")
+            }
+
+            let end = sessionEndsAt
+            let pendingLockScreenTask = lockScreenTask
+            if resetSessionClock && !notifyStarted {
+                lockScreenTask = Task {
+                    await pendingLockScreenTask?.value
+                    await lockScreen.updateMessageIfNeeded(end: end)
+                }
+            } else {
+                lockScreenTask = Task { [weak self, lockScreen] in
+                    await pendingLockScreenTask?.value
+                    let applied = await lockScreen.applyForSession(end: end)
+                    guard !applied else { return }
+                    self?.notify(title: "Caffinate", body: "Could not update the lock screen message.")
+                }
+            }
+        } catch {
+            isActive = false
+            activeArguments = []
+            health = .broken(reason: "failed to start")
+            teardownSessionMonitors(clearClock: true)
+            suppressTerminationNotification = false
+            notify(title: "Caffinate", body: "Failed to start: \(error.localizedDescription)")
+        }
+    }
+
+    private func handleProcessEnded(for ended: Process) {
+        if let current = process, current !== ended { return }
+
+        if suppressTerminationNotification {
+            suppressTerminationNotification = false
+            if isActive { return }
+        }
+
+        teardownSessionMonitors(clearClock: true)
+        process = nil
+        activeArguments = []
+        let wasActive = isActive
+        isActive = false
+        health = .idle
+        let pendingLockScreenTask = lockScreenTask
+        lockScreenTask = Task {
+            await pendingLockScreenTask?.value
+            await lockScreen.restoreAfterSession()
+        }
+
+        if wasActive && !userInitiatedStop {
+            notify(title: "Caffinate", body: "Keep-awake stopped.")
+        }
+        userInitiatedStop = false
+    }
+
+    private func startCountdown(total: Int) {
+        countdownTask?.cancel()
+        guard let start = sessionStartedAt else { return }
+        countdownTask = Task { @MainActor [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: 1_000_000_000)
+                guard let self, !Task.isCancelled else { return }
+                let elapsed = Int(self.now().timeIntervalSince(start))
+                let remaining = max(0, total - elapsed)
+                self.remainingSeconds = remaining
+                self.sessionEndsAt = start.addingTimeInterval(TimeInterval(total))
+                if remaining <= 0 {
+                    if self.process?.isRunning == true {
+                        self.userInitiatedStop = true
+                        self.process?.terminate()
+                    }
+                    return
                 }
             }
         }
-        do {
-            try task.run()
-        } catch {
-            sendNotification(title: "Caffinate", body: "Setup failed: \(error.localizedDescription)")
+    }
+
+    private func startHealthMonitor() {
+        healthMonitorTask?.cancel()
+        healthMonitorTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: 400_000_000)
+            while !Task.isCancelled {
+                guard let self, self.isActive else { return }
+                await self.refreshHealth()
+                try? await Task.sleep(nanoseconds: 2_500_000_000)
+            }
         }
     }
 
-    /// Sets or clears the lock screen message. Uses sudo + helper (no prompt) when setup was done on toggle.
-    func setLockScreenMessage(_ message: String) {
-        guard let scriptPath = lockScreenHelperPath, lockScreenSetupDone else { return }
-        let lockScreenSetupDoneKey = Self.lockScreenSetupDoneKey
-        let task = Process()
-        task.executableURL = URL(fileURLWithPath: "/usr/bin/sudo")
-        task.arguments = ["/bin/bash", scriptPath, message]
-        task.terminationHandler = { [weak self] process in
-            guard let self, process.terminationStatus != 0 else { return }
-            Task { @MainActor in
-                // If sudo fails (e.g. password required again), mark setup as not complete
-                // so the UI can offer re-entering the password.
-                UserDefaults.standard.set(false, forKey: lockScreenSetupDoneKey)
-                self.lockScreenSetupDone = false
-                self.lockScreenPasswordReentryNeeded = true
-                self.sendNotification(
-                    title: "Caffinate",
-                    body: "Could not update lock screen. Use the 'Re-enter password' button in the app to try again."
-                )
+    private func refreshHealth() async {
+        let pid = process?.processIdentifier
+        let alive = process?.isRunning == true
+        let expected = PowerAssertionProbe.expectedTypes(fromArguments: activeArguments)
+        let snapshot = await Task.detached(priority: .utility) {
+            PowerAssertionProbe.snapshot(caffeinatePID: pid, processAlive: alive)
+        }.value
+        guard !Task.isCancelled, isActive else { return }
+        health = PowerAssertionProbe.evaluate(
+            processAlive: snapshot.processAlive,
+            heldTypes: snapshot.heldTypes,
+            expectedTypes: expected
+        )
+    }
+
+    private func teardownSessionMonitors(clearClock: Bool) {
+        healthMonitorTask?.cancel()
+        healthMonitorTask = nil
+        countdownTask?.cancel()
+        countdownTask = nil
+        if clearClock {
+            sessionStartedAt = nil
+            sessionEndsAt = nil
+            remainingSeconds = 0
+        }
+    }
+
+    private func persistDuration() {
+        if let data = try? JSONEncoder().encode(duration) {
+            UserDefaults.standard.set(data, forKey: Self.durationKey)
+        }
+    }
+
+    private func notify(title: String, body: String) {
+        guard allowNotifications else { return }
+        notifications.send(title: title, body: body)
+    }
+
+    private func applyLaunchAtLogin(_ enabled: Bool) {
+        do {
+            if enabled {
+                try SMAppService.mainApp.register()
+            } else {
+                try SMAppService.mainApp.unregister()
+            }
+        } catch {
+            isLoadingPreferences = true
+            launchAtLogin = (SMAppService.mainApp.status == .enabled)
+            isLoadingPreferences = false
+            notify(title: "Caffinate", body: "Could not update Login Items. Try System Settings → General → Login Items.")
+        }
+    }
+
+    private func startPowerPolling() {
+        powerPollTask?.cancel()
+        powerPollTask = Task { @MainActor [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: 15_000_000_000)
+                self?.handlePowerSourceMaybeChanged()
             }
         }
+    }
+
+    private func handlePowerSourceMaybeChanged() {
+        let onAC = isOnPowerAdapter()
+        defer { lastOnAC = onAC }
+        guard let previous = lastOnAC else { return }
+        if onAC && !previous && activateOnPowerConnect && !isActive {
+            start()
+        } else if !onAC && previous && deactivateOnPowerDisconnect && isActive {
+            stop()
+        }
+    }
+
+    private func isOnPowerAdapter() -> Bool {
+        let task = Process()
+        task.executableURL = URL(fileURLWithPath: "/usr/bin/pmset")
+        task.arguments = ["-g", "batt"]
+        let out = Pipe()
+        task.standardOutput = out
+        task.standardError = Pipe()
         do {
             try task.run()
+            task.waitUntilExit()
+            let text = String(data: out.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
+            return text.contains("AC Power")
         } catch {
-            sendNotification(
-                title: "Caffinate",
-                body: "Could not update lock screen: \(error.localizedDescription)"
-            )
+            return true
         }
     }
 }

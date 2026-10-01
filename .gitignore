@@ -9,6 +9,19 @@ dist/
 *.xcuserstate
 xcuserdata/
 DerivedData/
+*.moved-aside
+*.pbxuser
+!default.pbxuser
 
 # macOS
 .DS_Store
+
+# Agent process artifacts
+.superpowers/
+docs/superpowers/*-report.md
+
+# Secrets / local
+.env
+*.pem
+*.p12
+AuthKey_*.p8
