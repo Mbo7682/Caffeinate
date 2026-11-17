@@ -81,6 +81,7 @@ final class CaffeinateManager: ObservableObject {
     private var healthMonitorTask: Task<Void, Never>?
     private var countdownTask: Task<Void, Never>?
     private var powerPollTask: Task<Void, Never>?
+    private var reconcileTask: Task<Void, Never>?
     private var lockScreenTask: Task<Void, Never>?
     private var userInitiatedStop = false
     private var suppressTerminationNotification = false
@@ -207,7 +208,7 @@ final class CaffeinateManager: ObservableObject {
     }
 
     func stop() {
-        guard isActive || process != nil else { return }
+        let hadSession = isActive || process != nil
         userInitiatedStop = true
         suppressTerminationNotification = false
         teardownSessionMonitors(clearClock: true)
@@ -215,6 +216,9 @@ final class CaffeinateManager: ObservableObject {
         process = nil
         isActive = false
         health = .idle
+        // The Process handle can already be gone while a child is still in the process list.
+        reconcileOwnedCaffeinateProcesses()
+        guard hadSession else { return }
         let pendingLockScreenTask = lockScreenTask
         lockScreenTask = Task {
             await pendingLockScreenTask?.value
@@ -227,12 +231,15 @@ final class CaffeinateManager: ObservableObject {
         userInitiatedStop = true
         suppressTerminationNotification = true
         powerPollTask?.cancel()
+        reconcileTask?.cancel()
+        reconcileTask = nil
         teardownSessionMonitors(clearClock: true)
         process?.terminate()
         process = nil
         isActive = false
         health = .idle
         activeArguments = []
+        reconcileOwnedCaffeinateProcesses()
         let pendingLockScreenTask = lockScreenTask
         lockScreenTask = Task {
             await pendingLockScreenTask?.value
@@ -246,6 +253,9 @@ final class CaffeinateManager: ObservableObject {
         lockScreenTask = Task { [lockScreen] in
             await lockScreen.reconcileAfterUnexpectedExit()
         }
+        // Drop any caffeinate still waiting on us before Activate at Launch may start a new one.
+        reconcileOwnedCaffeinateProcesses()
+        startReconcileLoop()
         if activateAtLaunch {
             start()
         }
@@ -327,6 +337,7 @@ final class CaffeinateManager: ObservableObject {
             if notifyStarted {
                 notify(title: "Caffinate", body: "Processes keep running while the Mac is locked.")
             }
+            reconcileOwnedCaffeinateProcesses()
 
             let end = sessionEndsAt
             let pendingLockScreenTask = lockScreenTask
@@ -397,6 +408,33 @@ final class CaffeinateManager: ObservableObject {
                     }
                     return
                 }
+            }
+        }
+    }
+
+    /// While the switch is off, signal every `caffeinate` we still own.
+    /// While it is on, signal extras and leave the tracked pid alone.
+    private func reconcileOwnedCaffeinateProcesses() {
+        let tracked = process.map(\.processIdentifier).flatMap { $0 > 0 ? $0 : nil }
+        let processes = CaffeinateProcessOwnership.parseProcessList(
+            CaffeinateProcessOwnership.currentProcessList()
+        )
+        let plan = CaffeinateProcessOwnership.plan(
+            ourPID: ProcessInfo.processInfo.processIdentifier,
+            isActive: isActive,
+            trackedPID: tracked,
+            processes: processes
+        )
+        CaffeinateProcessOwnership.signal(plan.pidsToSignal)
+    }
+
+    private func startReconcileLoop() {
+        guard reconcileTask == nil else { return }
+        reconcileTask = Task { @MainActor [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: 2_000_000_000)
+                guard let self, !Task.isCancelled else { return }
+                self.reconcileOwnedCaffeinateProcesses()
             }
         }
     }
