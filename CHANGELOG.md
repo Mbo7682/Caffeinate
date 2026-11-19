@@ -2,6 +2,12 @@
 
 All notable changes to Caffinate are documented here. The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+### Fixed
+
+- Turning keep-awake off now stops every `caffeinate` this app still owns, including one whose `Process` handle was already dropped. A child is owned when it is our child process or it is waiting on our pid (`-w`). Other people's `caffeinate` processes are left alone. The check repeats every couple of seconds while Caffinate is open.
+
 ## [2.4.2] - 2026-10-01
 
 ### Fixed

@@ -18,6 +18,7 @@
 		CAFF000000000000000045 /* AppUpdateInstaller.swift in Sources */ = {isa = PBXBuildFile; fileRef = CAFF000000000000000044 /* AppUpdateInstaller.swift */; };
 		CAFF000000000000000047 /* UntilTimePanelController.swift in Sources */ = {isa = PBXBuildFile; fileRef = CAFF000000000000000046 /* UntilTimePanelController.swift */; };
 		CAFF000000000000000049 /* LockScreenMessageService.swift in Sources */ = {isa = PBXBuildFile; fileRef = CAFF000000000000000048 /* LockScreenMessageService.swift */; };
+		CAFF00000000000000004D /* CaffeinateProcessOwnership.swift in Sources */ = {isa = PBXBuildFile; fileRef = CAFF00000000000000004C /* CaffeinateProcessOwnership.swift */; };
 		CAFF00000000000000001A /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = CAFF000000000000000019 /* Assets.xcassets */; };
 		CAFF00000000000000001B /* AppIcon.icns in Resources */ = {isa = PBXBuildFile; fileRef = CAFF00000000000000001C /* AppIcon.icns */; };
 		CAFF00000000000000004B /* set-lock-message.sh in Resources */ = {isa = PBXBuildFile; fileRef = CAFF00000000000000004A /* set-lock-message.sh */; };
@@ -47,6 +48,7 @@
 		CAFF000000000000000044 /* AppUpdateInstaller.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppUpdateInstaller.swift; sourceTree = "<group>"; };
 		CAFF000000000000000046 /* UntilTimePanelController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UntilTimePanelController.swift; sourceTree = "<group>"; };
 		CAFF000000000000000048 /* LockScreenMessageService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LockScreenMessageService.swift; sourceTree = "<group>"; };
+		CAFF00000000000000004C /* CaffeinateProcessOwnership.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CaffeinateProcessOwnership.swift; sourceTree = "<group>"; };
 		CAFF00000000000000004A /* set-lock-message.sh */ = {isa = PBXFileReference; lastKnownFileType = text.script.sh; path = "set-lock-message.sh"; sourceTree = "<group>"; };
 		CAFF00000000000000000A /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		CAFF000000000000000019 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
@@ -79,6 +81,7 @@
 				CAFF000000000000000002 /* CaffinateApp.swift */,
 				CAFF000000000000000006 /* CaffeinateManager.swift */,
 				CAFF000000000000000020 /* CaffeinateCommandBuilder.swift */,
+				CAFF00000000000000004C /* CaffeinateProcessOwnership.swift */,
 				CAFF000000000000000022 /* VersionCompare.swift */,
 				CAFF000000000000000026 /* NotificationService.swift */,
 				CAFF000000000000000028 /* StatusItemController.swift */,
@@ -217,6 +220,7 @@
 				CAFF000000000000000001 /* CaffinateApp.swift in Sources */,
 				CAFF000000000000000005 /* CaffeinateManager.swift in Sources */,
 				CAFF000000000000000021 /* CaffeinateCommandBuilder.swift in Sources */,
+				CAFF00000000000000004D /* CaffeinateProcessOwnership.swift in Sources */,
 				CAFF000000000000000023 /* VersionCompare.swift in Sources */,
 				CAFF000000000000000027 /* NotificationService.swift in Sources */,
 				CAFF000000000000000029 /* StatusItemController.swift in Sources */,

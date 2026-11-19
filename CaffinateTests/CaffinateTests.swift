@@ -33,8 +33,10 @@ final class CaffinateTests: XCTestCase {
             clearMessage: { true }
         )
 
-        XCTAssertFalse(await service.applyForSession(end: nil))
-        XCTAssertTrue(await service.applyForSession(end: nil))
+        let firstApply = await service.applyForSession(end: nil)
+        let secondApply = await service.applyForSession(end: nil)
+        XCTAssertFalse(firstApply)
+        XCTAssertTrue(secondApply)
         XCTAssertEqual(writtenMessages, ["Caffinate is keeping this Mac awake"])
         XCTAssertTrue(readResults.isEmpty)
     }
@@ -55,7 +57,8 @@ final class CaffinateTests: XCTestCase {
             }
         )
 
-        XCTAssertTrue(await service.applyForSession(end: nil))
+        let applied = await service.applyForSession(end: nil)
+        XCTAssertTrue(applied)
         await service.restoreAfterSession()
 
         XCTAssertEqual(writtenMessages, ["Caffinate is keeping this Mac awake", ""])
@@ -75,7 +78,8 @@ final class CaffinateTests: XCTestCase {
             clearMessage: { true }
         )
 
-        XCTAssertTrue(await service.applyForSession(end: nil))
+        let applied = await service.applyForSession(end: nil)
+        XCTAssertTrue(applied)
         await service.restoreAfterSession()
         await service.restoreAfterSession()
 
@@ -94,7 +98,8 @@ final class CaffinateTests: XCTestCase {
             }
         )
 
-        XCTAssertTrue(await service.applyForSession(end: nil))
+        let applied = await service.applyForSession(end: nil)
+        XCTAssertTrue(applied)
         await service.restoreAfterSession()
         await service.restoreAfterSession()
 
@@ -119,6 +124,7 @@ final class CaffinateTests: XCTestCase {
         )
         let manager = CaffeinateManager(lockScreen: service)
         manager.allowNotifications = false
+        manager.duration = .indefinite
 
         manager.start()
         await fulfillment(of: [applied], timeout: 2)
@@ -150,6 +156,7 @@ final class CaffinateTests: XCTestCase {
         )
         let manager = CaffeinateManager(lockScreen: service)
         manager.allowNotifications = false
+        manager.duration = .indefinite
 
         manager.start()
         await fulfillment(of: [readStarted], timeout: 2)
@@ -187,6 +194,7 @@ final class CaffinateTests: XCTestCase {
         )
         let manager = CaffeinateManager(lockScreen: service)
         manager.allowNotifications = false
+        manager.duration = .indefinite
 
         manager.start()
         await fulfillment(of: [readStarted], timeout: 2)
@@ -377,7 +385,8 @@ final class CaffinateTests: XCTestCase {
             writeMessage: { _ in true },
             clearMessage: { true }
         )
-        XCTAssertTrue(await beforeCrash.applyForSession(end: nil))
+        let applied = await beforeCrash.applyForSession(end: nil)
+        XCTAssertTrue(applied)
 
         var writtenMessages: [String] = []
         let afterRelaunch = LockScreenMessageService(
@@ -404,7 +413,8 @@ final class CaffinateTests: XCTestCase {
             writeMessage: { _ in true },
             clearMessage: { true }
         )
-        XCTAssertTrue(await beforeCrash.applyForSession(end: nil))
+        let applied = await beforeCrash.applyForSession(end: nil)
+        XCTAssertTrue(applied)
 
         var writtenMessages: [String] = []
         let afterRelaunch = LockScreenMessageService(
@@ -448,6 +458,7 @@ final class CaffinateTests: XCTestCase {
         XCTAssertFalse(VersionCompare.isNewer("2.0.0", than: "2.0.0"))
     }
 
+    @MainActor
     func testPreferredZipAssetPrefersNamedZip() {
         let assets = [
             UpdateChecker.GitHubAsset(name: "notes.txt", browserDownloadUrl: "https://example.com/notes.txt"),
@@ -460,6 +471,7 @@ final class CaffinateTests: XCTestCase {
         )
     }
 
+    @MainActor
     func testPreferredZipAssetFallsBackToFirstZip() {
         let assets = [
             UpdateChecker.GitHubAsset(name: "readme.md", browserDownloadUrl: "https://example.com/readme.md"),
@@ -469,5 +481,90 @@ final class CaffinateTests: XCTestCase {
             UpdateChecker.preferredZipAssetURL(from: assets)?.absoluteString,
             "https://example.com/build.zip"
         )
+    }
+
+    /// The process list captured while Caffinate was "on": child `caffeinate -i -w <app pid>`.
+    /// With the switch off, that pid must be selected even if we no longer hold a Process object.
+    func testOffSwitchSelectsOwnedCaffeinateFromProcessList() {
+        let output = """
+          887   875 /usr/bin/caffeinate -i -w 875
+           12     1 /usr/bin/caffeinate -i
+           99    50 /usr/bin/caffeinate -i -w 50
+          875     1 /Applications/Caffinate.app/Contents/MacOS/Caffinate
+        """
+        let processes = CaffeinateProcessOwnership.parseProcessList(output)
+        let plan = CaffeinateProcessOwnership.plan(
+            ourPID: 875,
+            isActive: false,
+            trackedPID: nil,
+            processes: processes
+        )
+        XCTAssertEqual(plan.pidsToSignal, [887])
+        XCTAssertNil(plan.pidToKeep)
+    }
+
+    func testOnSwitchKeepsTrackedCaffeinateAndSelectsTheStray() {
+        let output = """
+          887   875 /usr/bin/caffeinate -i -w 875
+          888   875 /usr/bin/caffeinate -i -d -w 875
+           12     1 /usr/bin/caffeinate -i
+        """
+        let plan = CaffeinateProcessOwnership.plan(
+            ourPID: 875,
+            isActive: true,
+            trackedPID: 888,
+            processes: CaffeinateProcessOwnership.parseProcessList(output)
+        )
+        XCTAssertEqual(plan.pidsToSignal, [887])
+        XCTAssertEqual(plan.pidToKeep, 888)
+    }
+
+    func testOnSwitchWithNoHandleKeepsTheOldestOwnedCaffeinate() {
+        let output = """
+          910   875 /usr/bin/caffeinate -i -w 875
+          887   875 /usr/bin/caffeinate -i -w 875
+        """
+        let plan = CaffeinateProcessOwnership.plan(
+            ourPID: 875,
+            isActive: true,
+            trackedPID: nil,
+            processes: CaffeinateProcessOwnership.parseProcessList(output)
+        )
+        XCTAssertEqual(plan.pidsToSignal, [910])
+        XCTAssertEqual(plan.pidToKeep, 887)
+    }
+
+    func testSignalStopsACaffeinateChildWaitingOnUs() throws {
+        let task = Process()
+        task.executableURL = URL(fileURLWithPath: "/usr/bin/caffeinate")
+        task.arguments = ["-i", "-t", "60", "-w", "\(ProcessInfo.processInfo.processIdentifier)"]
+        try task.run()
+        let pid = task.processIdentifier
+        defer {
+            if task.isRunning { task.terminate() }
+        }
+
+        let deadline = Date().addingTimeInterval(2)
+        var plan = CaffeinateProcessOwnership.Plan(pidsToSignal: [], pidToKeep: nil)
+        while Date() < deadline {
+            plan = CaffeinateProcessOwnership.plan(
+                ourPID: ProcessInfo.processInfo.processIdentifier,
+                isActive: false,
+                trackedPID: nil,
+                processes: CaffeinateProcessOwnership.parseProcessList(
+                    CaffeinateProcessOwnership.currentProcessList()
+                )
+            )
+            if plan.pidsToSignal.contains(pid) { break }
+            Thread.sleep(forTimeInterval: 0.05)
+        }
+        XCTAssertTrue(plan.pidsToSignal.contains(pid))
+
+        CaffeinateProcessOwnership.signal([pid])
+        let exitDeadline = Date().addingTimeInterval(2)
+        while task.isRunning && Date() < exitDeadline {
+            Thread.sleep(forTimeInterval: 0.05)
+        }
+        XCTAssertFalse(task.isRunning)
     }
 }
